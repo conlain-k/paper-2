@@ -1,0 +1,28 @@
+{
+    "_description": "Feed-forward FNO solver",
+    "_parent": "configs/fno_main.json",
+    "use_deq": false,
+    "use_micro": true,
+    "use_strain": false,
+    "use_bc_strain": false,
+    "use_stress": false,
+    "use_stress_polarization": false,
+    "use_energy": false,
+    "add_Green_iter": false,
+    "enforce_mean": true,
+    "fno_args": {
+        "modes": [
+            16,
+            16
+        ],
+        "normalize": true,
+        "activ_type": "gelu",
+        "init_weight_scale": 0.1,
+        "use_weight_norm": true,
+        "use_fourier_bias": true,
+        "resid_conn": true
+    },
+    "latent_dim": 32,
+    "projection_channels": 128,
+    "lr_init": 0.002
+}

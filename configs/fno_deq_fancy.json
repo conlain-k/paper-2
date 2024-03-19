@@ -1,0 +1,17 @@
+{
+    "_description": "Fancy DEQ FNO solver",
+    "_parent": "configs/fno_deq.json",
+    "use_fancy_iter": true,
+    "fno_args": {
+        "modes": [
+            16,
+            16
+        ],
+        "normalize": true,
+        "activ_type": "gelu",
+        "init_weight_scale": 0.01,
+        "use_weight_norm": true,
+        "use_fourier_bias": true,
+        "resid_conn": false
+    }
+}

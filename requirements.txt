@@ -1,0 +1,17 @@
+# basic packages
+numpy
+scipy
+matplotlib
+h5py
+pytest
+
+# we want cuda 11 support
+torch
+torchvision
+#pytorch-lightning
+#torchmetrics
+#torchinfo
+#torchviz
+
+# we need this for invertible layers
+torchdeq
