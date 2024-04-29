@@ -4,9 +4,27 @@ import os
 import sys
 import numpy as np
 import h5py
+import math
 
 # increase cache to 1GB
 H5_CACHE_SIZE = 4 * 1024 * 1024 * 1024
+
+SQRT2 = math.sqrt(2.0)
+
+
+def abaqus_to_mandel(vec_ab):
+    # return vec_ab
+    # print(vec_ab.shape, vec_ab[:, 0].shape)
+    vec_mand = vec_ab.new_zeros(vec_ab.shape)
+    vec_mand[..., 0, :, :, :] = vec_ab[..., 0, :, :, :]  # 11
+    vec_mand[..., 1, :, :, :] = vec_ab[..., 1, :, :, :]  # 22
+    vec_mand[..., 2, :, :, :] = vec_ab[..., 2, :, :, :]  # 33
+
+    vec_mand[..., 3, :, :, :] = SQRT2 * vec_ab[..., 5, :, :, :]  # 23
+    vec_mand[..., 4, :, :, :] = SQRT2 * vec_ab[..., 4, :, :, :]  # 31
+    vec_mand[..., 5, :, :, :] = SQRT2 * vec_ab[..., 3, :, :, :]  # 12
+
+    return vec_mand
 
 
 class LocalizationDataset(Dataset):
@@ -62,11 +80,8 @@ class LocalizationDataset(Dataset):
 
         # Load data and get label
         X = torch.from_numpy(self.micro[index]).float()
-        y = torch.from_numpy(self.strain[index]).float()
-        stress = torch.from_numpy(self.stress[index]).float()
-        # y = torch.cat([y, stress], dim=-4)
 
-        # # now normalize our strains
-        # y = y / self.ref_val
+        strain = abaqus_to_mandel(torch.from_numpy(self.strain[index]).float())
+        stress = abaqus_to_mandel(torch.from_numpy(self.stress[index]).float())
 
-        return X, y, stress
+        return X, strain, stress

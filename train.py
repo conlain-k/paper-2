@@ -52,7 +52,7 @@ def H1_loss(y_true, y_pred, scale=None, deriv_scale=10):
     return L2_loss + diff_loss
 
 
-def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst):
+def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst, resid):
     print(f"Saving fig for epoch {epoch}, min ind is {ind_worst}")
     assert ind_worst is not None
 
@@ -64,12 +64,16 @@ def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst):
         model, strain_true, micro
     )
 
+    err_energy = compute_strain_energy(
+        strain_true - strain_pred, stress_true - stress_pred
+    )
+
     # also compute VM stresses at that location
     VM_stress_pred = VMStress(stress_pred)
     VM_stress_true = VMStress(stress_true)
 
-    stressdiv_true = stressdiv(stress_true, use_FFT_deriv=True)
-    stressdiv_pred = stressdiv(stress_pred, use_FFT_deriv=True)
+    stressdiv_true = stressdiv(stress_true, use_FFT_deriv=False)
+    stressdiv_pred = stressdiv(stress_pred, use_FFT_deriv=False)
 
     print(stressdiv_true.shape, stressdiv_pred.shape)
 
@@ -135,12 +139,29 @@ def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst):
         model.config.image_dir,
     )
 
+    plot_pred(
+        epoch,
+        micro[0, 0][sind],
+        0 * err_energy[0, 0][sind],
+        err_energy[0, 0][sind] / model.energy_scaling,
+        "error_energy",
+        model.config.image_dir,
+    )
+    plot_pred(
+        epoch,
+        micro[0, 0][sind],
+        0 * resid[0, FIELD_IND][sind],
+        resid[0, FIELD_IND][sind] / model.strain_scaling,
+        "resid",
+        model.config.image_dir,
+    )
+
 
 def plot_pred(epoch, micro, y_true, y_pred, field_name, image_dir):
     vmin_t, vmax_t = y_true.min(), y_true.max()
     vmin_p, vmax_p = y_pred.min(), y_pred.max()
-    vmin = vmin_t  # min(vmin_t, vmin_p)
-    vmax = vmax_t  # max(vmax_t, vmax_p)
+    vmin = min(vmin_t, vmin_p)
+    vmax = max(vmax_t, vmax_p)
 
     fig = plt.figure(figsize=(6, 6))
 
@@ -214,8 +235,9 @@ def plot_pred(epoch, micro, y_true, y_pred, field_name, image_dir):
 
 
 def compute_quants(model, strain, micros):
-    stress = model.constlaw(strain, micros)
-    stress_polar = model.constlaw.stress_pol(strain, micros)
+    C_field = model.constlaw.compute_C_field(micros)
+    stress = model.constlaw(strain, C_field)
+    stress_polar = model.constlaw.stress_pol(strain, C_field)
     energy = compute_strain_energy(strain, stress)
 
     return stress, stress_polar, energy
@@ -245,6 +267,12 @@ def compute_losses(model, quants_pred, quants_true, resid):
         deriv_scale=model.config.H1_deriv_scaling,
     )
 
+    err_energy = compute_strain_energy(
+        strain_true - strain_pred, stress_true - stress_pred
+    )
+
+    err_energy_loss = 100 * (err_energy**2).mean().sqrt() / model.energy_scaling
+
     resid_loss = 0
     stressdiv_loss = 0
 
@@ -259,13 +287,25 @@ def compute_losses(model, quants_pred, quants_true, resid):
         )
 
     losses = LossSet(
-        model.config, strain_loss, stress_loss, energy_loss, resid_loss, stressdiv_loss
+        model.config,
+        strain_loss,
+        stress_loss,
+        energy_loss,
+        err_energy_loss,
+        resid_loss,
+        stressdiv_loss,
     )
 
     return losses.detach(), losses.compute_total()
 
 
-def valid_pass(model, epoch, valid_loader):
+def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
+
+    # if we're given an ema model, use that for forward passes
+    eval_model = ema_model or model
+
+    eval_model.eval()
+
     # zero out losses to star
     running_loss = LossSet(config=model.config)
     L1_strain_err = 0
@@ -274,18 +314,30 @@ def valid_pass(model, epoch, valid_loader):
     micro_worst = None
     strain_true_worst = None
     strain_pred_worst = None
-    diff_worst = 0
+    resid_worst = None
     ind_worst = None
 
     homog_err = 0
     mean_homog = 0
-    for _, (micros, strain_true, _) in enumerate(valid_loader):
+
+    running_time_cost = 0
+    for ind, (micros, strain_true, _) in enumerate(eval_loader):
+
+        torch.cuda.synchronize()
+        t0 = time.time()
+        if data_mode == DataMode.TEST:
+            print(f"Testing batch {ind} of {len(eval_loader)}")
         micros = micros.to(model.config.device)
         # only predict first component
         strain_true = strain_true.to(model.config.device)
 
         with torch.inference_mode():
-            output = model(micros)
+            output = eval_model(micros)
+
+        torch.cuda.synchronize()
+        t1 = time.time()
+        # build up how long it's taken to run all samples
+        running_time_cost += t1 - t0
 
         if model.config.return_resid and model.config.use_deq:
             (strain_pred, resid) = output
@@ -318,7 +370,7 @@ def valid_pass(model, epoch, valid_loader):
             micro_worst = micros[b_ind : b_ind + 1].detach()
             strain_true_worst = strain_true[b_ind : b_ind + 1].detach()
             strain_pred_worst = strain_pred[b_ind : b_ind + 1].detach()
-            diff_worst = diff.detach()
+            resid_worst = resid[b_ind : b_ind + 1].detach()
             ind_worst = ind_max[1:]
 
         losses_e, _ = compute_losses(
@@ -349,13 +401,13 @@ def valid_pass(model, epoch, valid_loader):
         # average out over space
         LSE = (strain_pred - strain_true)[:, 0].abs().mean(dim=(-3, -2, -1)).detach()
         # rescale so that each instance contributes equally
-        LSE *= (len(micros) / len(valid_loader.dataset)) / model.strain_scaling
+        LSE *= (len(micros) / len(eval_loader.dataset)) / model.strain_scaling
 
         # now average out over batch size
         LSE = LSE.mean()
         LVE = (VM_stress_pred - VM_stress_true).abs().mean(dim=(-3, -2, -1)).detach()
         # rescale, and also divide by true mean absolute VM stress
-        LVE *= (len(micros) / len(valid_loader.dataset)) / VM_stress_true.abs().mean(
+        LVE *= (len(micros) / len(eval_loader.dataset)) / VM_stress_true.abs().mean(
             dim=(-3, -2, -1)
         )
         LVE = LVE.mean()
@@ -364,33 +416,40 @@ def valid_pass(model, epoch, valid_loader):
         L1_VM_stress_err += LVE
 
     # divide out number of batches (simple normalization)
-    running_loss /= len(valid_loader)
+    running_loss /= len(eval_loader)
 
     # now valid loop is done
     plot_worst(
-        epoch, model, micro_worst, strain_true_worst, strain_pred_worst, ind_worst
+        epoch,
+        model,
+        micro_worst,
+        strain_true_worst,
+        strain_pred_worst,
+        ind_worst,
+        resid_worst,
     )
 
     # print("last batch vm metrics")
 
     # print("VM_stress_true", VM_stress_true.min(), VM_stress_true.max(), VM_stress_true.mean(), VM_stress_true.std())
     # print("VM_stress_pred", VM_stress_pred.min(), VM_stress_pred.max(), VM_stress_pred.mean(), VM_stress_pred.std())
-    homog_err_abs = homog_err / len(valid_loader.dataset)
-    mean_homog = mean_homog / len(valid_loader.dataset)
+    homog_err_abs = homog_err / len(eval_loader.dataset)
+    mean_homog = mean_homog / len(eval_loader.dataset)
 
-    wandb.log(
-        {
-            "epoch": epoch,
-            "total_valid_loss": running_loss.compute_total(),
-            "validation_losses": running_loss.to_dict(),
-            "homog_err_rel": homog_err_abs / mean_homog,
-            "valid_exx_err": L1_strain_err,
-            "valid_VM_err": L1_VM_stress_err,
-        }
-    )
+    if data_mode == DataMode.VALID:
+        wandb.log(
+            {
+                "epoch": epoch,
+                f"total_{data_mode}_loss": running_loss.compute_total(),
+                f"{data_mode}_losses": running_loss.to_dict(),
+                "homog_err_rel": homog_err_abs / mean_homog,
+                f"{data_mode}_exx_err": L1_strain_err,
+                f"{data_mode}_VM_err": L1_VM_stress_err,
+            }
+        )
 
     # print some metrics on the epoch
-    print(f"Epoch {epoch}, validation: {running_loss}")
+    print(f"Epoch {epoch}, {data_mode} loss: {running_loss}")
     print(f"Normalized e_xx absolute error is: {L1_strain_err * 100:.5} %")
     print(f"Normalized VM stress absolute error is: {L1_VM_stress_err * 100:.5} %")
     print(f"Abs homog err is {homog_err_abs}, rel is {homog_err_abs / mean_homog}")
@@ -401,16 +460,38 @@ def valid_pass(model, epoch, valid_loader):
         f"True range: min {strain_true[:, 0].min():.5}, max {strain_true[:, 0].max():.5}, mean {strain_true[:, 0].mean():.5}, std {strain_true[:, 0].std():.5}"
     )
 
+    valid_time_per_micro = 1000 * running_time_cost / len(eval_loader.dataset)
+
+    print(
+        f"Inference only cost {running_time_cost} s total, {valid_time_per_micro:.2f} ms per instance"
+    )
+
+    return running_loss.compute_total(), valid_time_per_micro
+
 
 def train_model(model, config, train_loader, valid_loader):
     model = model.to(config.device)  # move to GPU
 
+    if config.use_EMA:
+        ema_model = torch.optim.swa_utils.AveragedModel(
+            model, multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(0.99)
+        )
+    else:
+        ema_model = None  # makes eval code simpler
+
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=config.lr_init, weight_decay=config.weight_decay
+        model.parameters(), lr=config.lr_max, weight_decay=config.weight_decay
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, config.num_epochs, eta_min=1e-8
     )
+    # scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    #     optimizer,
+    #     config.lr_max,
+    #     epochs=config.num_epochs,
+    #     steps_per_epoch=1,
+    #     pct_start=0.2,  # first 20% is increase, then anneal
+    # )
 
     print(model.strain_scaling, model.stress_scaling, model.energy_scaling)
 
@@ -418,12 +499,12 @@ def train_model(model, config, train_loader, valid_loader):
         print(DELIM)
 
         # Run a validation pass before training this epoch
-        model.eval()
-
         # time validation pass
         start = time.time()
 
-        valid_pass(model, e, valid_loader)
+        _, valid_time_per_micro = eval_pass(
+            model, e, valid_loader, DataMode.VALID, ema_model=ema_model
+        )
 
         diff = time.time() - start
 
@@ -432,6 +513,7 @@ def train_model(model, config, train_loader, valid_loader):
 
         model.train()
         running_loss = 0
+        best_loss = 1e6
 
         # now time training pass
         start = time.time()
@@ -472,6 +554,10 @@ def train_model(model, config, train_loader, valid_loader):
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip_mag)
             optimizer.step()
 
+            # update averaged model after the first epoch (so that we discard the initial noisy model)
+            if config.use_EMA and e > 0:
+                ema_model.update_parameters(model)
+
             # now accumulate losses for future
             running_loss += total_loss.detach() / len(train_loader)
 
@@ -500,6 +586,7 @@ def train_model(model, config, train_loader, valid_loader):
                 "total_train_loss": running_loss,
                 "train_iter_time": diff,
                 "lr": optimizer.param_groups[0]["lr"],
+                "valid_time_per_micro": valid_time_per_micro,
             }
         )
 
@@ -511,6 +598,17 @@ def train_model(model, config, train_loader, valid_loader):
 
         print(f"Epoch {e}: instance-average loss was {running_loss:5f}")
 
-        # save_checkpoint(model, optimizer, scheduler, e, running_loss)
+        if running_loss < best_loss:
+            best_loss = running_loss.detach()
+            save_checkpoint(
+                model,
+                optimizer,
+                scheduler,
+                e,
+                running_loss,
+                best=True,
+                ema_model=ema_model,
+            )
+
         print(DELIM)
         print("\n")

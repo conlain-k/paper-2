@@ -1,0 +1,5 @@
+{
+    "_description": "DEQ FNO solver",
+    "_parent": "configs/fno_deq.json",
+    "add_Green_iter": true
+}

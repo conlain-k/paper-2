@@ -2,8 +2,10 @@ import torch
 
 import itertools
 from helpers import *
+from tensor_ops import *
 
 from torch import pi as PI
+
 
 class GreensOp(torch.nn.Module):
     def __init__(self, constlaw, N):
@@ -161,12 +163,12 @@ class GreensOp(torch.nn.Module):
         # assumes size is b,6,x,y,z
 
         # lift into 3x3 matrix
-        x = vec_to_mat(x)
+        x = mandel_to_mat_3x3(x)
         x_ft = torch.fft.fftn(x, dim=(-3, -2, -1))
         y_ft = torch.einsum("ijkhxyz, bkhxyz -> bijxyz", self.G_freq, x_ft)
 
         # drop back to vector format
-        y_ft = mat_to_vec(y_ft)
+        y_ft = mat_3x3_to_mandel(y_ft)
         y = torch.fft.ifftn(y_ft, dim=(-3, -2, -1), s=x.shape[-3:])
 
         return y.real

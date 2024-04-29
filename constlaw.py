@@ -3,41 +3,19 @@ from torch import pi as PI
 import itertools
 
 from helpers import *
+from tensor_ops import *
+from einops import rearrange
+from euler_ang import *
 
 
-class StrainToStress_2phase(torch.nn.Module):
-    def __init__(self, E_vals, nu_vals):
-        # computes stresses from strains and stiffness tensor
+class StrainToStress_base(torch.nn.Module):
+    def __init__(self):
+        # computes stresses from strains and stiffness tensor (base class)
         super().__init__()
-        # store Lamé coefficients for simplicity
-        self.nphases = len(E_vals)
-        self.lamb_vals = torch.zeros(self.nphases)
-        self.mu_vals = torch.zeros(self.nphases)
-        # hold stiffnes matrix for each phase
-        self.register_buffer("stiffness_mats", torch.zeros((self.nphases, 6, 6)))
-        self.register_buffer("compliance_mats", torch.zeros((self.nphases, 6, 6)))
 
-        for j in range(self.nphases):
-            # compute Lamé constants
-            self.lamb_vals[j], self.mu_vals[j] = YMP_to_Lame(E_vals[j], nu_vals[j])
-
-            # cache stiffness matrix for later
-            self.stiffness_mats[j] = self.compute_C_matrix(
-                self.lamb_vals[j], self.mu_vals[j]
-            )
-
-            # also cache compliance (inverse stiffness)
-            self.compliance_mats[j] = torch.linalg.inv(self.stiffness_mats[j])
-
-        self.lamb_0 = self.lamb_vals.mean()
-        self.mu_0 = self.mu_vals.mean()
-        # store reference stiffness matrix
+        # store reference stiffness matrix (need to set values in child class)
         self.register_buffer("C_ref", torch.zeros((1, 6, 6)))
-        self.register_buffer("S_ref", torch.zeros((1, 6, 6)))
-
-        # reference-phase stiffness and compliance
-        self.C_ref = self.compute_C_matrix(self.lamb_0, self.mu_0)
-        self.S_ref = torch.linalg.inv(self.C_ref)
+        # self.register_buffer("S_ref", torch.zeros((1, 6, 6)))
 
     def compute_C_matrix(self, lamb, mu):
         new_mat = torch.zeros((6, 6), dtype=torch.float32, requires_grad=False)
@@ -54,120 +32,102 @@ class StrainToStress_2phase(torch.nn.Module):
 
         return new_mat
 
-    def forward(self, strain, micro):
-        """Apply a given constitutive law over a batch of n-phase microstructures"""
-        assert micro is not None
-        # y = torch.zeros_like(strain)
-
-        # h is phase num, xyz are space, r,c index C_rc mapping strains strain_c to stresses stress_r
-        stress = torch.einsum(
-            "bhxyz, hrc, bcxyz->brxyz", micro, self.stiffness_mats, strain
-        )
-
-        return stress
-
-    def inverse(self, stress, micro):
-        assert micro is not None
-
-        strain = torch.einsum(
-            "bhxyz, hrc, bcxyz->brxyz", micro, self.compliance_mats, stress
-        )
-        return strain
-
-    def stress_pol(self, strain, micro):
-        stress = self.forward(strain, micro)
+    def stress_pol(self, strain, C_field):
+        C_pert = C_field - self.C_ref.reshape(1, 6, 6, 1, 1, 1)
         # compute stress polarization
-        stress_polarization = stress - torch.einsum(
-            "rc, bcijk -> brijk", self.C_ref, strain
-        )
+        stress_polarization = torch.einsum("brcxyz, bcxyz -> brxyz", C_pert, strain)
 
         return stress_polarization
 
+    def forward(self, strain, C_field):
+        """Apply a given constitutive law over a batch of n-phase microstructures"""
 
-class GreensOp(torch.nn.Module):
-    def __init__(self, lamb_0, mu_0, N):
+        # print("strain", strain.shape, "C", C_field.shape)
+        stress = torch.einsum("brcxyz, bcxyz->brxyz", C_field, strain)
+
+        return stress
+
+
+class StrainToStress_2phase(StrainToStress_base):
+    def __init__(self, E_vals, nu_vals):
+        # computes stresses from strains and stiffness tensor (2 phase specialization)
+        super().__init__()
+        self.nphases = len(E_vals)
+        self.lamb_vals = torch.zeros(self.nphases)
+        self.mu_vals = torch.zeros(self.nphases)
+        # hold stiffnes matrix for each phase
+        self.register_buffer("stiffness_mats", torch.zeros((self.nphases, 6, 6)))
+        self.register_buffer("compliance_mats", torch.zeros((self.nphases, 6, 6)))
+
+        for j in range(self.nphases):
+            # compute Lamé constants
+            self.lamb_vals[j], self.mu_vals[j] = YMP_to_Lame(E_vals[j], nu_vals[j])
+
+            # cache stiffness matrix for later
+            self.stiffness_mats[j] = isotropic_mandel66(
+                self.lamb_vals[j], self.mu_vals[j]
+            )
+
+            # also cache compliance (inverse stiffness)
+            self.compliance_mats[j] = torch.linalg.inv(self.stiffness_mats[j])
+
+        # store Lamé coefficients for simplicity
+
+        self.lamb_0 = self.lamb_vals.mean()
+        self.mu_0 = self.mu_vals.mean()
+        self.C_ref = isotropic_mandel66(self.lamb_0, self.mu_0)
+        # self.S_ref = torch.linalg.inv(self.C_ref)
+
+    def compute_C_field(self, micros):
+        # compute stiffness tensor field from 2-phase microstructure
+        return torch.einsum("bhxyz, hrc -> brcxyz", micros, self.stiffness_mats)
+
+
+class StrainToStress_crystal(StrainToStress_base):
+    def __init__(self, C11, C12, C44):
+        # computes stresses from strains and stiffness tensor (cubic crystal)
         super().__init__()
 
-        # store Lamé coefficients
-        # self.lam, self.mu = YMP_to_Lamé(E, nu)
-        self.lamb = lamb_0
-        self.mu = mu_0
+        C_unrot = cubic_mandel66(C11, C12, C44)
+        C_unrot_3333 = C_mandel_to_mat_3x3x3x3(C_unrot)
+        # use aniso reference for now (NOT GOOD)
+        self.register_buffer("C_unrot", C_unrot)
+        self.register_buffer("C_unrot_3333", C_unrot_3333)
 
-        # how many voxels in each direction?
-        self.N = N
+        self.C_ref = cubic_mandel66(C11, C12, C44)
 
-        # precompute Green's op in freq space
-        self.register_buffer("G_freq", self._compute_coeffs(self.N))
+    def compute_local_stiffness(self, euler_ang, stiff_mat_base):
 
-    def _compute_coeffs(self, N):
-        # integer freq terms
-        ksi = torch.fft.fftfreq(N) * 2 * PI
-        # get it as 3 terms
-        ksi_vec = torch.meshgrid(ksi, ksi, ksi, indexing="ij")
-        # stack into a frequency vector
-        ksi_vec = torch.stack(ksi_vec, dim=0)
+        orig_shape = euler_ang.shape
 
-        # take element-wise squaring (e.g. squared 2-norm)
-        ksi_2 = (ksi_vec**2).sum(dim=0)
-        # don't change norm of zero element (since it's already zero)
-        ksi_2[..., 0, 0, 0] = 1
+        # assumes batch is first index, then space, then angle (dream3d order)
+        euler_ang = rearrange(euler_ang, "b x y z theta -> (b x y z) theta", theta=3)
 
-        ksi_vec = ksi_vec / ksi_2.sqrt()
+        # output is (bxyz, 6, 6)
+        C_field = batched_rotate(euler_ang, stiff_mat_base, passive=False)
 
-        # two coefficients in Green's op calculation
-        coef_1 = 1 / 4 * self.mu
-        coef_2 = (self.lamb + self.mu) / (self.mu * (self.lamb + 2 * self.mu))
+        C_field = C_3x3x3x3_to_mandel(C_field)
 
-        delta = lambda i, j: int(i == j)
+        # unbatch and move channels last
+        C_field = rearrange(
+            C_field,
+            "(b x y z) r c -> b r c x y z",
+            b=orig_shape[0],
+            x=orig_shape[1],
+            y=orig_shape[2],
+            z=orig_shape[3],
+            r=6,
+            c=6,
+        )
+        # flatten euler angles first
 
-        G = torch.zeros(3, 3, 3, 3, N, N, N, dtype=torch.cfloat)
-        # sweep over every possibly combination of indices
-        for ind in itertools.product([0, 1, 2], repeat=4):
-            i, j, k, h = ind
-            # grab elements of ksi vector
-            ksi_i, ksi_j, ksi_k, ksi_h = ksi_vec[i], ksi_vec[j], ksi_vec[k], ksi_vec[h]
+        return C_field
 
-            # compute each term in the Green's op expression
-            term_1 = (
-                delta(k, i) * ksi_h * ksi_j
-                + delta(h, i) * ksi_k * ksi_j
-                + delta(k, j) * ksi_h * ksi_i
-                + delta(h, j) * ksi_k * ksi_i
-            )
-            term_2 = ksi_i * ksi_j * ksi_k * ksi_h
-
-            G[i, j, k, h] = coef_1 * term_1 - coef_2 * term_2
-
-        # Make sure zero-freq terms are actually zero
-        # G[..., 0,0,0] = 0
-        return G
-
-    def forward(self, tau):
-        tau_mat = vec_to_mat(tau)
-        # given a stress-like quantity tau, apply the green's tensor via fourier space to get a strain-like quantity eps
-        tau_ft = torch.fft.fftn(tau_mat, dim=(-3, -2, -1))
-        # do an element-wise matrix multiplication across all frequencies and batch instances
-        eps_ft = torch.einsum("ijkhxyz, bkhxyz -> bijxyz", self.G_freq, tau_ft)
-
-        eps_ft_vec = mat_to_vec(eps_ft)
-
-        print(eps_ft_vec.shape)
-
-        # re-set zero-freq term later
-        eps_ft_vec[:, :, 0, 0, 0] = 0.0
-        eps_ft_vec[:, 0, 0, 0, 0] = 0.001
-        print(eps_ft_vec.shape)
-        print(eps_ft_vec[:, :, 0, 0, 0])
-
-        eps = torch.fft.ifftn(eps_ft_vec, dim=(-3, -2, -1), s=tau.shape[-3:])
-
-        # now explicitly truncate
-        eps = eps.real
-
-        # eps_vec = mat_to_vec(eps)
-
-        # now we have a "strain" field!
-        return eps
+    def compute_C_field(self, micros):
+        # compute stiffness tensor field from 2-phase microstructure
+        # print(self.C_unrot_3333)
+        # print(self.C_unrot)
+        return self.compute_local_stiffness(micros, self.C_unrot_3333)
 
 
 def VMStress(stress):
@@ -180,14 +140,12 @@ def VMStress(stress):
 
     vm_stress = ((3.0 / 2.0) * inner).sqrt()
 
-    # print(vm_stress.shape)
-
     # sum over first two dimensions
     return vm_stress
 
 
 def stressdeviator(stress):
-    stress_mat = vec_to_mat(stress)
+    stress_mat = mandel_to_mat_3x3(stress)
     trace = stress_mat[:, 0, 0] + stress_mat[:, 1, 1] + stress_mat[:, 2, 2]
     stress_dev_mat = stress_mat
 
@@ -279,9 +237,8 @@ def est_homog(strain, stress, inds):
 
 def stressdiv(stress, use_FFT_deriv=True):
 
-    stress_mat = vec_to_mat(stress)
+    stress_mat = mandel_to_mat_3x3(stress)
 
-    # print(stress_mat.shape)
     # compute average stress divergence for a given stress field using either Fourier derivatives or finite differences
     if use_FFT_deriv:
         [dx, dy, dz] = batched_vector_FFT_grad(stress_mat, disc=True)

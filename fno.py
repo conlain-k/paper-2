@@ -15,10 +15,12 @@ class FNO(torch.nn.Module):
         in_channels,
         out_channels,
         mid_channels=24,
-        projection_channels=None,  # defaults to bigger of mid_channels, out_channels
+        final_projection_channels=128,  # defaults to bigger of mid_channels, out_channels
         activ_type="gelu",
         use_weight_norm=False,
-        **kwargs
+        modes=(10, 10),
+        use_MLP=True,
+        **kwargs,
     ):
         super().__init__()
         # lifting and projection blocks
@@ -32,24 +34,34 @@ class FNO(torch.nn.Module):
         self.proj = ProjectionBlock(
             mid_channels,
             out_channels,
-            hidden_channels=projection_channels,
+            hidden_channels=final_projection_channels,
             activ_type=activ_type,
             use_weight_norm=use_weight_norm,
             final_bias=False,
         )
 
-        self.forward_latent = FNO_Middle(
-            activ_type=activ_type,
-            use_weight_norm=use_weight_norm,
-            mid_channels=mid_channels,
-            **kwargs
-        )
+        blocks = []
+        for mm in modes:
+            blocks.append(
+                FNO_Block(
+                    activ_type=activ_type,
+                    use_weight_norm=use_weight_norm,
+                    mid_channels=mid_channels,
+                    num_modes=mm,
+                    use_MLP=use_MLP,
+                    **kwargs,
+                )
+            )
+
+        self.blocks = torch.nn.ModuleList(blocks)
 
     def forward(self, x):
         # print(x.shape)
         x = self.lift(x)
 
-        x = self.forward_latent(x)
+        for block in self.blocks:
+            # apply FNO blocks sequentially
+            x = block(x)
 
         # now do two projection steps, with an activation in the middle
         x = self.proj(x)
@@ -57,81 +69,76 @@ class FNO(torch.nn.Module):
         return x
 
 
-class FNO_Middle(torch.nn.Module):
+class FNO_Block(torch.nn.Module):
     def __init__(
         self,
         activ_type,
         use_weight_norm,
         mid_channels,
-        modes,
+        num_modes,
         normalize,
         init_weight_scale,
         use_fourier_bias,
         resid_conn,
-        **kwargs
+        use_MLP
+        **kwargs,
     ):
         super().__init__()
 
         self.resid_conn = resid_conn
+        self.normalize = normalize
 
-        # set up FNO filters
-        convs = []
-        filts = []
-        acts = []
-        norms = []
-        for mm in modes:
-            # spectral convolution
-            convs.append(
-                fourier_conv.SpectralConv3d(
-                    mid_channels,
-                    mid_channels,
-                    mm,
-                    mm,
-                    mm,
-                    scale_fac=init_weight_scale,
-                    use_bias=use_fourier_bias,
-                )
-            )
+        # spectral convolution
+        self.conv = fourier_conv.SpectralConv3d(
+            mid_channels,
+            mid_channels,
+            num_modes,
+            num_modes,
+            num_modes,
+            scale_fac=init_weight_scale,
+            use_bias=use_fourier_bias,
+        )
 
-            # local channel-wise filter
-            filt = torch.nn.Conv3d(mid_channels, mid_channels, kernel_size=1)
-            if use_weight_norm:
-                filt = weight_norm(filt)
-            filts.append(filt)
+        # local channel-wise filter
+        self.filt = torch.nn.Conv3d(mid_channels, mid_channels, kernel_size=1)
 
-            acts.append(get_activ(activ_type, mid_channels))
+        if use_weight_norm:
+            self.filt = weight_norm(self.filt)
 
-            if normalize:
-                # group size = 1 (a.k.a. easy layernorm)
-                norms.append(torch.nn.GroupNorm(1, mid_channels))
+        self.activ = get_activ(activ_type, mid_channels)
 
-        # now store ops in the class
-        self.convs = torch.nn.ModuleList(convs)
-        self.filts = torch.nn.ModuleList(filts)
-        self.acts = torch.nn.ModuleList(acts)
         if normalize:
-            self.norms = torch.nn.ModuleList(norms)
-        else:
-            self.norms = None
+            # group size = 1 (a.k.a. easy layernorm)
+            self.norm_0 = torch.nn.GroupNorm(1, mid_channels)
+    
+        # add another local FC layer before activation
+        self.use_MLP = use_MLP
+        if self.use_MLP:
+            self.mlp_layer = ProjectionBlock(mid_channels, mid_channels, 
+            activ_type=activ_type,
+            use_weight_norm=use_weight_norm,
+            final_bias=True,)
 
     # just the middle bit of an FNO
     def forward(self, x):
-        # for each conv/filter op, apply them
-        for ind, (conv, filt, activ) in enumerate(
-            zip(self.convs, self.filts, self.acts)
-        ):
-            if self.resid_conn:
-                x0 = x
-            # residual after normalization
-            if self.norms:
-                x = self.norms[ind](x)
-            x1 = conv(x)
-            x2 = filt(x)
-            # now apply activation
-            x = activ(x1 + x2)
+        # residual outside normalization
+        if self.resid_conn:
+            x0 = x
 
-            if self.resid_conn:
-                # residual connection
-                x += x0
+        # normalize before input
+        if self.normalize:
+            x = self.norm_0(x)
+
+        x1 = self.conv(x)
+        if self.use_MLP:
+            x1 = self.mlp_layer(x1)
+        x2 = self.filt(x)
+
+        # now apply activation
+        x = self.activ(x1 + x2)
+
+        if self.resid_conn:
+            # residual connection
+            x += x0
 
         return x
