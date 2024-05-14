@@ -154,7 +154,7 @@ class Localizer_DEQ(LocalizerBase):
             config, input_channels=channels_in, output_channels=6
         )
 
-    def encode_micro_strain(self, strain, C_field):
+    def encode_micro_strain(self, strain, C_field, m):
         # encode microstructure and strain field
         # always use strain as input
         feat = [strain / self.strain_scaling]
@@ -162,9 +162,9 @@ class Localizer_DEQ(LocalizerBase):
         # precompute stress for convenience
         stress = self.constlaw(strain, C_field)
 
-        # if self.config.use_micro:
-        #     # append both phases for convenience
-        #     feat.append(m)
+        if self.config.use_micro:
+            # append all phases for convenience
+            feat.append(m)
 
         # build up features
         if self.config.use_stress:
@@ -201,16 +201,12 @@ class Localizer_DEQ(LocalizerBase):
             1, 6, 1, 1, 1
         )
 
-    def single_iter_simple(self, C_field, strain_k):
-        # iterate over strain directly
-        # if self.config.add_Green_iter:
-        #     strain_k_tmp = self.green_iter(m, strain_k)
+    def single_iter_simple(self, strain_k, C_field, m):
+        """
+        Given a stiffness tensor C corresponding to micro m, update the current strain field using the neural net
+        """
 
-        # return 0 * strain_k + init_strain
-
-        # return init_strain
-
-        z_k = self.encode_micro_strain(strain_k, C_field)
+        z_k = self.encode_micro_strain(strain_k, C_field, m)
 
         if self.config.add_Green_iter:
             # get moulinec-suquet update
@@ -280,8 +276,8 @@ class Localizer_DEQ(LocalizerBase):
         # print(C_field.min(), C_field.max())
 
         # just iterate over strain dim directly
-        F = lambda h: self.single_iter_simple(C_field, h)
-        h0 = self.compute_init_strain(m, None) * 0
+        F = lambda h: self.single_iter_simple(h, C_field, m)
+        h0 = self.compute_init_strain(m, None)  # * 0
 
         # print("init", h0.shape)
         # h_shape[1] = 6 # done automatically

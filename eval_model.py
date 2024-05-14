@@ -15,6 +15,8 @@ import os
 
 import argparse
 
+from torch.nn.parallel import DistributedDataParallelCPU
+
 parser = argparse.ArgumentParser(prog="main.py", description="Train localization NN")
 
 parser.add_argument("-c", "--config_override", default=None)
@@ -68,5 +70,15 @@ if __name__ == "__main__":
 
     model = model.to(config.device)
     model.eval()
+
+    # model = torch.compile(model)
+
+    print(f"Using {torch.get_num_threads()} threads!")
+    print(f"Using {torch.get_num_interop_threads()} interop threads!")
+
+    # if not torch.cuda.is_available():
+    #     model = DistributedDataParallelCPU(model)
+
+    torch.set_num_threads(1)
 
     eval_pass(model, -1, test_loader, DataMode.TEST)

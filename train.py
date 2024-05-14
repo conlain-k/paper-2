@@ -15,6 +15,12 @@ from mpl_toolkits.axes_grid1 import AxesGrid
 FIELD_IND = 0
 
 
+def sync():
+    # force cuda sync if cuda is available, otherwise skip
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+
 def PRMS_loss(y_true, y_pred, scale=None):
     mseloss = torch.nn.MSELoss()
     if scale is not None:
@@ -323,10 +329,10 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
     running_time_cost = 0
     for ind, (micros, strain_true, _) in enumerate(eval_loader):
 
-        torch.cuda.synchronize()
-        t0 = time.time()
+        sync()
         if data_mode == DataMode.TEST:
             print(f"Testing batch {ind} of {len(eval_loader)}")
+        t0 = time.time()
         micros = micros.to(model.config.device)
         # only predict first component
         strain_true = strain_true.to(model.config.device)
@@ -334,8 +340,12 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
         with torch.inference_mode():
             output = eval_model(micros)
 
-        torch.cuda.synchronize()
+        sync()
         t1 = time.time()
+
+        if data_mode == DataMode.TEST:
+            print(f"This batch took {t1 - t0} seconds")
+
         # build up how long it's taken to run all samples
         running_time_cost += t1 - t0
 
