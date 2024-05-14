@@ -25,6 +25,7 @@ SCRATCH_DIR = "/storage/home/hcoda1/3/ckelly84/scratch/"
 
 CHECKPOINT_DIR = "checkpoints"
 
+
 def write_dataset_to_h5(dataset, name, h5_file):
 
     if isinstance(dataset, torch.Tensor):
@@ -34,19 +35,16 @@ def write_dataset_to_h5(dataset, name, h5_file):
     chunk_size = (1,) + dataset[0].shape
     print("chunk size is", chunk_size)
 
-        # now make the actual datasets
+    # now make the actual datasets
     h5_file.create_dataset(
-            name,
-            data=dataset,
-            dtype=dataset.dtype,
-            compression="gzip",
-            compression_opts=4,
-            shuffle=True,
-            chunks=chunk_size,
+        name,
+        data=dataset,
+        dtype=dataset.dtype,
+        compression="gzip",
+        compression_opts=4,
+        shuffle=True,
+        chunks=chunk_size,
     )
-
-
-
 
 
 def collect_datasets(m_base, CR):
@@ -128,7 +126,7 @@ def save_checkpoint(model, optim, sched, epoch, loss, best=False, ema_model=None
 
 def load_checkpoint(path, model, optim=None, sched=None, strict=True):
     # loads checkpoint into a given model and optimizer
-    checkpoint = torch.load(path)
+    checkpoint = torch.load(path, map_location=model.config.device)
     model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
     if optim is not None:
         optim.load_state_dict(checkpoint["optimizer_state_dict"], strict=strict)

@@ -330,7 +330,7 @@ def test_euler_pred():
 
     # print(euler_ang.shape)
 
-    checkpoint_file = "checkpoints/model_fno_deq_17.7M_s31_best.ckpt"
+    checkpoint_file = "checkpoints/deq_best.ckpt"
     conf_file = "configs/fno_deq.json"
 
     conf_args = load_conf_override(conf_file)

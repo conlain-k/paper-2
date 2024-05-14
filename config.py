@@ -8,7 +8,7 @@ DELIM = "-" * 40
 # coefficients for balancing loss functions
 lam_strain = 1
 lam_stress = 1
-lam_energy = 1
+lam_energy = 0
 lam_err_energy = 1
 # lam_stressdiv = 0.1
 lam_stressdiv = 0
@@ -22,7 +22,7 @@ lam_energy = lam_energy / lam_sum
 lam_stressdiv = lam_stressdiv / lam_sum
 
 # residual error is usually small anyways, and we want our DEQ gradients to be accurate
-lam_resid = 1000
+lam_resid = 100
 
 
 @dataclass
@@ -49,15 +49,15 @@ class Config:
 
     # Should we use a fixed maximum # iters, or randomize over training
     deq_randomize_max: bool = True
-    deq_min_iter: int = 3
+    deq_min_iter: int = 5
 
     deq_args: dict = field(
         default_factory=lambda: {
             "f_solver": "anderson",
             "b_solver": "anderson",
-            "f_max_iter": 32,
-            "b_max_iter": 20,
-            "f_tol": 1e-5,
+            "f_max_iter": 16,
+            "b_max_iter": 16,
+            "f_tol": 1e-4,
             "b_tol": 1e-5,
             # use last 3 steps
             # "grad": 5,
@@ -97,7 +97,7 @@ class Config:
     # output_displacement: bool = False
     compute_stressdiv: bool = True
 
-    grad_clip_mag: float = 10
+    grad_clip_mag: float = 100
     use_skip_update: bool = False
     enforce_mean: bool = True
 
