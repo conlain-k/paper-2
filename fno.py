@@ -31,6 +31,7 @@ class FNO(torch.nn.Module):
             use_weight_norm=use_weight_norm,
             final_bias=True,
             final_activ=True,
+            normalize=True,
         )
         self.proj = ProjectionBlock(
             mid_channels,
@@ -38,6 +39,9 @@ class FNO(torch.nn.Module):
             hidden_channels=final_projection_channels,
             activ_type=activ_type,
             use_weight_norm=use_weight_norm,
+            final_bias=False,
+            final_activ=False,
+            normalize=True,
         )
 
         blocks = []

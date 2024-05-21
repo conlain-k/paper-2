@@ -258,9 +258,6 @@ class Localizer_DEQ(LocalizerBase):
     #     return eh_kp
 
     def forward(self, m):
-        # build up shape of latent dim based on micro
-        h_shape = list(m.shape)
-
         C_field = self.constlaw.compute_C_field(m)
 
         # print("HH", m.shape, C_field.shape)
@@ -271,9 +268,6 @@ class Localizer_DEQ(LocalizerBase):
         # just iterate over strain dim directly
         F = lambda h: self.single_iter_simple(h, C_field, m)
         h0 = self.compute_init_strain(m, None)  # * 0
-
-        # print("init", h0.shape)
-        # h_shape[1] = 6 # done automatically
 
         # randomize # iters during train time
         if self.config.deq_randomize_max and self.training:

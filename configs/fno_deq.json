@@ -6,7 +6,7 @@
     "use_strain": true,
     "use_bc_strain": true,
     "use_stress": true,
-    "use_stress_polarization": false,
+    "use_stress_polarization": true,
     "use_energy": true,
     "add_Green_iter": false,
     "enforce_mean": true,
@@ -20,11 +20,11 @@
         "init_weight_scale": 0.01,
         "use_weight_norm": true,
         "use_fourier_bias": true,
-        "resid_conn": true
+        "resid_conn": false
     },
     "latent_dim": 24,
     "use_skip_update": false,
-    "lr_max": 5e-3,
+    "lr_max": 1e-3,
     "num_epochs": 200,
     "H1_deriv_scaling": 10
 }

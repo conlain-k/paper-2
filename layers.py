@@ -353,19 +353,19 @@ class ProjectionBlock(torch.nn.Module):
 
         # set up normalization
         if normalize:
-            self.norm = torch.nn.GroupNorm(1, hidden_channels)
+            self.norm = torch.nn.InstanceNorm3d(in_channels)
 
         if use_weight_norm:
             self.proj_1 = weight_norm(self.proj_1)
             self.proj_2 = weight_norm(self.proj_2)
 
     def forward(self, x):
+        # if self.normalize:
+        #     # normalize before first projection layer
+        #     x = self.norm(x)
         x = self.proj_1(x)
         x = self.activ_1(x)
 
-        if self.normalize:
-            # normalize before second projection layer
-            x = self.norm(x)
         x = self.proj_2(x)
         # apply final activation (if relevant)
         if self.final_activ:
