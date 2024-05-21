@@ -5,10 +5,14 @@ from helpers import *
 from tensor_ops import *
 from plot_cube import *
 from euler_ang import *
+from greens_op import *
+from loaders import *
 from config import Config
 from solvers import make_localizer
 import time
 from h5py import File
+
+from main import load_data
 
 import numpy as np
 
@@ -330,10 +334,12 @@ def test_euler_pred():
 
     # print(euler_ang.shape)
 
-    checkpoint_file = "checkpoints/deq_best.ckpt"
-    conf_file = "configs/fno_deq.json"
+    checkpoint_file = "checkpoints/model_fno_deq_hybrid_17.7M_s31_best.ckpt"
+    conf_file = "configs/fno_deq_hybrid.json"
 
     conf_args = load_conf_override(conf_file)
+    conf_args["use_stress_polarization"] = True
+    conf_args["use_energy"] = True
     # print(conf_args)
     config = Config(**conf_args)
     config.num_voxels = 62
@@ -343,12 +349,20 @@ def test_euler_pred():
 
     model = make_localizer(config)
 
-    # override crystalline const law
     model.setConstParams(E_VALS, NU_VALS, E_BAR)
-    model.set_constlaw_crystal(C11, C12, C44)
+    const2 = model.constlaw
+
+    del model.greens_op
+
+    # override to set crystalline const law
 
     # pull in saved weights
     load_checkpoint(checkpoint_file, model, strict=False)
+
+    model.set_constlaw_crystal(C11, C12, C44)
+    model.constlaw.mu_0 = const2.mu_0
+    model.constlaw.lamb_0 = const2.lamb_0
+    model.greens_op = GreensOp(model.constlaw, 62)
 
     # make sure we're ready to eval
     model = model.cuda()
@@ -405,10 +419,190 @@ def test_euler_pred():
     write_dataset_to_h5(euler_ang.unsqueeze(0), "euler_ang", f)
 
 
-test_stiff_ref()
-test_mandel()
-test_rotat()
-test_euler_pred()
+def test_FFT_iters_crystal():
+
+    f = File("01_CubicSingleEquiaxedOut.dream3d")
+
+    euler_ang = f["DataContainers"]["SyntheticVolumeDataContainer"]["CellData"][
+        "EulerAngles"
+    ][:]
+
+    euler_ang = torch.from_numpy(euler_ang)
+
+    # print(euler_ang.shape)
+
+    constlaw2 = StrainToStress_2phase([120, 120 * 100], [0.3, 0.3])
+
+    constlaw = StrainToStress_crystal(C11, C12, C44)
+
+    C_field = constlaw.compute_C_field(euler_ang[None])
+
+    constlaw.mu_0 = constlaw2.mu_0
+    constlaw.lamb_0 = constlaw2.lamb_0
+
+    G = GreensOp(constlaw, 62)
+
+    eps = torch.zeros(1, 6, 62, 62, 62)
+    eps[:, 0] = 0.001
+
+    import matplotlib as mpl
+
+    mpl.rcParams["figure.facecolor"] = "white"
+
+    for i in range(100):
+        eps = G.forward(eps, C_field)
+        print(eps.shape)
+        if i % 10 == 0:
+            plot_cube(eps[0, 0], savedir=f"FFT_eps_{i}.png", cmap="coolwarm")
+            f = File(f"crystal_fft_{i}.h5", "w")
+            write_dataset_to_h5(C_field, "C_field", f)
+            write_dataset_to_h5(eps, "strain", f)
+
+
+def test_FFT_iters_2phase():
+
+    datasets, _ = collect_datasets("paper2_smooth", 100.0)
+    dataset = LocalizationDataset(**datasets[DataMode.TRAIN])
+    m, eps_FEA, sigma_FEA = dataset[0:1]
+
+    # resp_f = h5py.File("/storage/home/hcoda1/3/ckelly84/scratch/outputs/spher_inc_cr100.0_bc0/00000.h5")
+    # eps_FEA, sigma_FEA = resp_f["strain"][:], resp_f["stress"][:]
+
+    # resp_f.close()
+
+    # m = h5py.File("/storage/home/hcoda1/3/ckelly84/scratch/micros/spher_inc.h5")["micros"][:]
+
+    m = torch.as_tensor(m)
+    eps_FEA = torch.as_tensor(eps_FEA)
+    sigma_FEA = torch.as_tensor(sigma_FEA)
+
+    UPSAMP = 2
+
+    m = upsample_field(m, UPSAMP)
+    eps_FEA = upsample_field(eps_FEA, UPSAMP)
+    sigma_FEA = upsample_field(sigma_FEA, UPSAMP)
+
+    # print(datasets)
+
+    # print(dataset.length)
+
+    # print(dataset[0].shape)
+
+    print(m.shape)
+
+    N = m.shape[-1]
+
+    constlaw = StrainToStress_2phase([120, 120 * 100], [0.3, 0.3])
+
+    C_field = constlaw.compute_C_field(m)
+
+    C_homog_FEA = sigma_FEA[0, 0].mean() / eps_FEA[0, 0].mean()
+
+    G = GreensOp(constlaw, N)
+
+    eps = torch.zeros(1, 6, N, N, N)
+    eps[:, 0] = 0.001
+
+    import matplotlib as mpl
+
+    mpl.rcParams["figure.facecolor"] = "white"
+
+    plot_cube(eps_FEA[0, 0], savedir="2phase_eps_FEA.png", cmap="coolwarm")
+    plot_cube(sigma_FEA[0, 0], savedir="2phase_sigma_FEA.png", cmap="coolwarm")
+
+    FEA_resid_equi, FEA_resid_compat = G.compute_residuals(eps_FEA, sigma_FEA)
+    FEA_div_sigma_FT = stressdiv(sigma_FEA).mean()
+    FEA_equi_err = constlaw.C_norm(FEA_resid_equi).item()
+    FEA_compat_err = constlaw.C_norm(FEA_resid_compat).item()
+
+    print(
+        f"FEA Residuals, div sigma = {FEA_div_sigma_FT:4f}, equi err = {FEA_equi_err:4f}, compat err = {FEA_compat_err:4f}"
+    )
+
+    sigma_init = constlaw.forward(eps, C_field)
+
+    init_resid_equi, init_resid_compat = G.compute_residuals(eps, sigma_init)
+    init_div_sigma_FT = stressdiv(sigma_init).mean()
+    init_equi_err = constlaw.C_norm(init_resid_equi).item()
+    init_compat_err = constlaw.C_norm(init_resid_compat).item()
+
+    print(
+        f"init Residuals, div sigma = {init_div_sigma_FT:4f}, equi err = {init_equi_err:4f}, compat err = {init_compat_err:4f}"
+    )
+
+    # get initial field with correct mean (not in equilib)
+    eps_rand = torch.randn(1, 6, N, N, N)
+    eps_rand = eps + eps_rand - eps_rand.mean(dim=(-3, -2, -1), keepdim=True)
+    sigma_rand = constlaw.forward(eps_rand, C_field)
+
+    rand_resid_equi, rand_resid_compat = G.compute_residuals(eps_rand, sigma_rand)
+    rand_div_sigma_FT = stressdiv(sigma_rand).mean()
+    rand_equi_err = constlaw.C_norm(rand_resid_equi).item()
+    rand_compat_err = constlaw.C_norm(rand_resid_compat).item()
+
+    print(
+        f"rand Residuals, div sigma = {rand_div_sigma_FT:4f}, equi err = {rand_equi_err:4f}, compat err = {rand_compat_err:4f}"
+    )
+
+    print(f"\t C homog FEA is {C_homog_FEA:4f}")
+
+    MAX_ITERS = 200
+
+    div_sigma_FT = torch.zeros(200)
+    equi_err = torch.zeros(200)
+    compat_err = torch.zeros(200)
+    C_homog = torch.zeros(200)
+
+    for i in range(200):
+        eps = G.forward(eps, C_field)
+        sigma = constlaw.forward(eps, C_field)
+
+        resid_equi, resid_compat = G.compute_residuals(eps, sigma)
+
+        div_sigma_FT[i] = stressdiv(sigma).mean()
+        equi_err[i] = constlaw.C_norm(resid_equi)
+        compat_err[i] = constlaw.C_norm(resid_compat)
+        C_homog[i] = sigma[0, 0].mean() / eps[0, 0].mean()
+
+        print(eps.shape)
+        if i % 20 == 0:
+            print(
+                f"Iter {i}, div sigma = {div_sigma_FT[i]:4f}, equi err = {equi_err[i]:4f}, compat err = {compat_err[i]:4f}"
+            )
+            print(f"\t C homog is {C_homog[i]:4f}")
+            plot_cube(eps[0, 0], savedir=f"FFT_2phase_eps_{i}.png", cmap="coolwarm")
+            plot_cube(sigma[0, 0], savedir=f"FFT_2phase_sig_{i}.png", cmap="coolwarm")
+            f = File(f"2phase_fft_{i}.h5", "w")
+            write_dataset_to_h5(C_field, "C_field", f)
+            write_dataset_to_h5(eps, "strain", f)
+
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(1, 4, figsize=(10, 6))
+    x = torch.arange(MAX_ITERS)
+    ax[0].plot(x, div_sigma_FT)
+    ax[0].set_title("Stress Divergence (FFT)")
+
+    ax[1].plot(x, equi_err)
+    ax[1].set_title("Equilibrium Error (C0)")
+
+    ax[2].plot(x, compat_err)
+    ax[2].set_title("Compatibility Error (C0)")
+
+    ax[3].plot(x, abs(C_homog - C_homog_FEA))
+    ax[3].set_title("C_homog error")
+
+    fig.tight_layout()
+    plt.savefig("FFT_convergence_trace.png", dpi=300)
+
+
+test_FFT_iters_2phase()
+
+# test_euler_pred()
+# test_FFT_iters_crystal()
+# test_stiff_ref()
+# test_mandel()
+# test_rotat()
 
 
 # test_euler_ang()

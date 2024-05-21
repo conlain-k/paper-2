@@ -121,6 +121,7 @@ class FNO_Block(torch.nn.Module):
                 use_weight_norm=use_weight_norm,
                 final_bias=True,
                 final_activ=True,
+                normalize=True,
             )
 
     # just the middle bit of an FNO

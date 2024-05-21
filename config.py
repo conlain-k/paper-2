@@ -8,18 +8,18 @@ DELIM = "-" * 40
 # coefficients for balancing loss functions
 lam_strain = 1
 lam_stress = 1
-lam_energy = 0
-lam_err_energy = 1
+lam_energy = 1
+lam_err_energy = 0
 # lam_stressdiv = 0.1
 lam_stressdiv = 0
 
-lam_sum = lam_strain + lam_stress + lam_energy + lam_stressdiv + lam_err_energy
+lam_sum = lam_strain + lam_stress + lam_energy  # + lam_stressdiv + lam_err_energy
 
 lam_strain = lam_strain / lam_sum
 lam_stress = lam_stress / lam_sum
 lam_energy = lam_energy / lam_sum
 # lam_err_energy = lam_err_energy / lam_sum
-lam_stressdiv = lam_stressdiv / lam_sum
+# lam_stressdiv = lam_stressdiv / lam_sum
 
 # residual error is usually small anyways, and we want our DEQ gradients to be accurate
 lam_resid = 100
@@ -97,7 +97,7 @@ class Config:
     # output_displacement: bool = False
     compute_stressdiv: bool = True
 
-    grad_clip_mag: float = 100
+    grad_clip_mag: float = 10
     use_skip_update: bool = False
     enforce_mean: bool = True
 

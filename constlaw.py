@@ -14,8 +14,21 @@ class StrainToStress_base(torch.nn.Module):
         super().__init__()
 
         # store reference stiffness matrix (need to set values in child class)
-        self.register_buffer("C_ref", torch.zeros((1, 6, 6)))
-        # self.register_buffer("S_ref", torch.zeros((1, 6, 6)))
+        self.register_buffer("C_ref", torch.zeros((6, 6)))
+        self.register_buffer("S_ref", torch.zeros((6, 6)))
+
+        self.strain_scaling = 1
+        self.stress_scaling = 1
+        self.energy_scaling = 1
+
+    def set_scalings(self, eps_bar):
+        frob = lambda x: (x**2).sum().sqrt()
+        self.strain_scaling = frob(eps_bar)
+
+        # stress corresponding to references
+        self.stress_scaling = frob(self.C_ref @ eps_bar)
+        # energy corresponding to references
+        self.energy_scaling = frob((eps_bar @ (self.C_ref @ eps_bar)))
 
     def compute_C_matrix(self, lamb, mu):
         new_mat = torch.zeros((6, 6), dtype=torch.float32, requires_grad=False)
@@ -47,6 +60,23 @@ class StrainToStress_base(torch.nn.Module):
 
         return stress
 
+    def C_norm(self, field):
+        """
+        Given a batch of 3D symmetric tensor fields (e.g. stress, strain) compute the C0-norm
+        Used to check convergence / as an error metric
+        Assumes field has indices b, i, x, y, z and size (batch_size, 6, N, N, N) for N voxels in each direction
+        """
+
+        return (field**2).sum(dim=1).mean((-3, -2, -1)).sqrt()
+        # get number voxels (is there an easier way?)
+        S = torch.prod(torch.as_tensor(field.shape[-3:]))
+        # contract components *and* spatial dimensions
+        res = torch.einsum("brxyz, rc, bcxyz -> b", field, self.C_ref, field)
+        # divide out number of voxels (sum -> average)
+        res = res / S
+
+        return res
+
 
 class StrainToStress_2phase(StrainToStress_base):
     def __init__(self, E_vals, nu_vals):
@@ -76,7 +106,7 @@ class StrainToStress_2phase(StrainToStress_base):
         self.lamb_0 = self.lamb_vals.mean()
         self.mu_0 = self.mu_vals.mean()
         self.C_ref = isotropic_mandel66(self.lamb_0, self.mu_0)
-        # self.S_ref = torch.linalg.inv(self.C_ref)
+        self.S_ref = torch.linalg.inv(self.C_ref)
 
     def compute_C_field(self, micros):
         # compute stiffness tensor field from 2-phase microstructure
@@ -95,6 +125,7 @@ class StrainToStress_crystal(StrainToStress_base):
         self.register_buffer("C_unrot_3333", C_unrot_3333)
 
         self.C_ref = cubic_mandel66(C11, C12, C44)
+        self.S_ref = torch.linalg.inv(self.C_ref)
 
     def compute_local_stiffness(self, euler_ang, stiff_mat_base):
 

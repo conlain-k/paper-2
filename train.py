@@ -96,24 +96,24 @@ def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst, resid):
     plot_pred(
         epoch,
         micro[0, 0][sind],
-        strain_true[0, FIELD_IND][sind] / model.strain_scaling,
-        strain_pred[0, FIELD_IND][sind] / model.strain_scaling,
+        strain_true[0, FIELD_IND][sind] / model.constlaw.strain_scaling,
+        strain_pred[0, FIELD_IND][sind] / model.constlaw.strain_scaling,
         "strain",
         model.config.image_dir,
     )
     plot_pred(
         epoch,
         micro[0, 0][sind],
-        stress_true[0, FIELD_IND][sind] / model.stress_scaling,
-        stress_pred[0, FIELD_IND][sind] / model.stress_scaling,
+        stress_true[0, FIELD_IND][sind] / model.constlaw.stress_scaling,
+        stress_pred[0, FIELD_IND][sind] / model.constlaw.stress_scaling,
         "stress",
         model.config.image_dir,
     )
     plot_pred(
         epoch,
         micro[0, 0][sind],
-        stress_polar_true[0, FIELD_IND][sind] / model.stress_scaling,
-        stress_polar_pred[0, FIELD_IND][sind] / model.stress_scaling,
+        stress_polar_true[0, FIELD_IND][sind] / model.constlaw.stress_scaling,
+        stress_polar_pred[0, FIELD_IND][sind] / model.constlaw.stress_scaling,
         "stress_polarization",
         model.config.image_dir,
     )
@@ -121,8 +121,8 @@ def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst, resid):
     plot_pred(
         epoch,
         micro[0, 0][sind],
-        VM_stress_true[0, FIELD_IND][sind] / model.stress_scaling,
-        VM_stress_pred[0, FIELD_IND][sind] / model.stress_scaling,
+        VM_stress_true[0, FIELD_IND][sind] / model.constlaw.stress_scaling,
+        VM_stress_pred[0, FIELD_IND][sind] / model.constlaw.stress_scaling,
         "VM_stress",
         model.config.image_dir,
     )
@@ -130,8 +130,8 @@ def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst, resid):
     plot_pred(
         epoch,
         micro[0, 0][sind],
-        stressdiv_true[0, 0][sind] / model.stress_scaling,
-        stressdiv_pred[0, 0][sind] / model.stress_scaling,
+        stressdiv_true[0, 0][sind] / model.constlaw.stress_scaling,
+        stressdiv_pred[0, 0][sind] / model.constlaw.stress_scaling,
         "stressdiv",
         model.config.image_dir,
     )
@@ -139,8 +139,8 @@ def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst, resid):
     plot_pred(
         epoch,
         micro[0, 0][sind],
-        energy_true[0, 0][sind] / model.energy_scaling,
-        energy_pred[0, 0][sind] / model.energy_scaling,
+        energy_true[0, 0][sind] / model.constlaw.energy_scaling,
+        energy_pred[0, 0][sind] / model.constlaw.energy_scaling,
         "energy",
         model.config.image_dir,
     )
@@ -149,7 +149,7 @@ def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst, resid):
         epoch,
         micro[0, 0][sind],
         0 * err_energy[0, 0][sind],
-        err_energy[0, 0][sind] / model.energy_scaling,
+        err_energy[0, 0][sind] / model.constlaw.energy_scaling,
         "error_energy",
         model.config.image_dir,
     )
@@ -157,7 +157,7 @@ def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst, resid):
         epoch,
         micro[0, 0][sind],
         0 * resid[0, FIELD_IND][sind],
-        resid[0, FIELD_IND][sind] / model.strain_scaling,
+        resid[0, FIELD_IND][sind] / model.constlaw.strain_scaling,
         "resid",
         model.config.image_dir,
     )
@@ -257,19 +257,19 @@ def compute_losses(model, quants_pred, quants_true, resid):
     strain_loss = H1_loss(
         strain_true,
         strain_pred,
-        scale=model.strain_scaling,
+        scale=model.constlaw.strain_scaling,
         deriv_scale=model.config.H1_deriv_scaling,
     )
     stress_loss = H1_loss(
         stress_true,
         stress_pred,
-        scale=model.stress_scaling,
+        scale=model.constlaw.stress_scaling,
         deriv_scale=model.config.H1_deriv_scaling,
     )
     energy_loss = H1_loss(
         energy_true,
         energy_pred,
-        scale=model.energy_scaling,
+        scale=model.constlaw.energy_scaling,
         deriv_scale=model.config.H1_deriv_scaling,
     )
 
@@ -277,19 +277,21 @@ def compute_losses(model, quants_pred, quants_true, resid):
         strain_true - strain_pred, stress_true - stress_pred
     )
 
-    err_energy_loss = 100 * (err_energy**2).mean().sqrt() / model.energy_scaling
+    err_energy_loss = (
+        100 * (err_energy**2).mean().sqrt() / model.constlaw.energy_scaling
+    )
 
     resid_loss = 0
     stressdiv_loss = 0
 
     if model.config.return_resid:
-        resid_loss = 100 * (resid**2).mean().sqrt() / model.strain_scaling
+        resid_loss = 100 * (resid**2).mean().sqrt() / model.constlaw.strain_scaling
 
     if model.config.compute_stressdiv:
         stressdiv_loss = (
             100
             * (stressdiv(stress_pred, use_FFT_deriv=True) ** 2).mean().sqrt()
-            / model.stress_scaling
+            / model.constlaw.stress_scaling
         )
 
     losses = LossSet(
@@ -411,7 +413,7 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
         # average out over space
         LSE = (strain_pred - strain_true)[:, 0].abs().mean(dim=(-3, -2, -1)).detach()
         # rescale so that each instance contributes equally
-        LSE *= (len(micros) / len(eval_loader.dataset)) / model.strain_scaling
+        LSE *= (len(micros) / len(eval_loader.dataset)) / model.constlaw.strain_scaling
 
         # now average out over batch size
         LSE = LSE.mean()
@@ -493,7 +495,7 @@ def train_model(model, config, train_loader, valid_loader):
         model.parameters(), lr=config.lr_max, weight_decay=config.weight_decay
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, config.num_epochs, eta_min=1e-8
+        optimizer, config.num_epochs, eta_min=1e-6
     )
     # scheduler = torch.optim.lr_scheduler.OneCycleLR(
     #     optimizer,
@@ -503,7 +505,11 @@ def train_model(model, config, train_loader, valid_loader):
     #     pct_start=0.2,  # first 20% is increase, then anneal
     # )
 
-    print(model.strain_scaling, model.stress_scaling, model.energy_scaling)
+    print(
+        model.constlaw.strain_scaling,
+        model.constlaw.stress_scaling,
+        model.constlaw.energy_scaling,
+    )
 
     for e in range(config.num_epochs):
         print(DELIM)
@@ -576,7 +582,7 @@ def train_model(model, config, train_loader, valid_loader):
                 # print split on first batch to track progress
                 print(f"Epoch {e}, batch {batch_ind}: {losses_e}")
                 print(
-                    f"Normalized e_xx absolute error is: {(strain_pred - strain_true)[:, 0].abs().mean() / model.strain_scaling * 100:.5} %"
+                    f"Normalized e_xx absolute error is: {(strain_pred - strain_true)[:, 0].abs().mean() / model.constlaw.strain_scaling * 100:.5} %"
                 )
                 print(
                     f"Pred range: min {strain_pred[:, 0].min():.5}, max {strain_pred[:, 0].max():.5}, mean {strain_pred[:, 0].mean():.5}, std {strain_pred[:, 0].std():.5}"

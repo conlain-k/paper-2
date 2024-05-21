@@ -21,13 +21,13 @@ def make_model(config, input_channels, output_channels):
             in_channels=input_channels,
             out_channels=output_channels,
             mid_channels=config.latent_dim,
-            **config.fno_args
+            **config.fno_args,
         )
     else:
         return SimpleLayerNet(
             in_channels=input_channels,
             out_channels=output_channels,
-            **config.network_args
+            **config.network_args,
         )
 
 
@@ -64,25 +64,13 @@ class LocalizerBase(torch.nn.Module):
             self.greens_op = GreensOp(self.constlaw, self.config.num_voxels)
 
         # take frob norm of a given quantity
-        frob = lambda x: (x**2).sum().sqrt()
 
-        # print("eps", self.eps_bar.shape)
-        # print("C", self.constlaw.C_ref.shape)
-        # print((self.eps_bar @ self.constlaw.C_ref @ self.eps_bar).shape)
-        self.strain_scaling = frob(self.eps_bar)
-
-        # stress corresponding to a scaled strain
-        self.stress_scaling = frob(self.constlaw.C_ref @ self.eps_bar)
-        self.energy_scaling = frob(
-            (self.eps_bar @ (self.constlaw.C_ref @ self.eps_bar))
-        )
-
-        # print(self.strain_scaling, self.stress_scaling, self.energy_scaling)
-        # print(self.eps_bar)
-        # exit(1)
+        self.constlaw.set_scalings(self.eps_bar)
 
     def set_constlaw_crystal(self, C11, C12, C44):
         self.constlaw = StrainToStress_crystal(C11, C12, C44)
+        # make sure scalings are set correctly
+        self.constlaw.set_scalings(self.eps_bar)
 
     def enforce_zero_mean(self, x):
         # remove the average value from a field (for each instance, channel)
@@ -157,7 +145,7 @@ class Localizer_DEQ(LocalizerBase):
     def encode_micro_strain(self, strain, C_field, m):
         # encode microstructure and strain field
         # always use strain as input
-        feat = [strain / self.strain_scaling]
+        feat = [strain / self.constlaw.strain_scaling]
 
         # precompute stress for convenience
         stress = self.constlaw(strain, C_field)
@@ -168,22 +156,27 @@ class Localizer_DEQ(LocalizerBase):
 
         # build up features
         if self.config.use_stress:
-            feat.append(stress / self.stress_scaling)
+            feat.append(stress / self.constlaw.stress_scaling)
 
         if self.config.use_stress_polarization:
-            stress_polar = self.constlaw.stress_pol(strain, C_field)
-            feat.append(stress_polar / self.stress_scaling)
+            # negate stress polarization to get positive-ish values
+            stress_polar = -1 * self.constlaw.stress_pol(strain, C_field)
+            feat.append(stress_polar / self.constlaw.stress_scaling)
 
         if self.config.use_energy:
             strain_energy = compute_strain_energy(strain, stress)
-            feat.append(strain_energy / self.energy_scaling)
+            feat.append(strain_energy / self.constlaw.energy_scaling)
 
         # if self.config.use_bc_strain:
         #     eps_avg = self.compute_init_strain(m, None)
-        #     feat.append(eps_avg / self.strain_scaling)
+        #     feat.append(eps_avg / self.constlaw.strain_scaling)
 
         # collect features into a vector
         nn_features = torch.concatenate(feat, dim=1)
+
+        # print(
+        #     f"\t\tMean features: {nn_features.mean(dim=(-3, -2, -1, 0))}, std features: {nn_features.std(dim=(-3, -2, -1, 0))}",
+        # )
 
         # now return dense feat vec
         return nn_features
@@ -213,12 +206,12 @@ class Localizer_DEQ(LocalizerBase):
             # NOTE: block gradients flowing through this step (e.g. don't differentiate through MS step)
             # hopefully this stabilizes training
             eps_ms = self.greens_op.forward(strain_k.detach(), C_field)
-            z_ms = self.encode_micro_strain(eps_ms, C_field)
+            z_ms = self.encode_micro_strain(eps_ms, C_field, m)
             # stack on M-S features after current features
             z_k = torch.concatenate([z_k, z_ms], dim=1)
 
         # predict new strain perturbation
-        strain_kp = self.forward_net(z_k) * self.strain_scaling
+        strain_kp = self.forward_net(z_k) * self.constlaw.strain_scaling
 
         if self.config.use_skip_update:
             strain_kp += strain_k
@@ -254,7 +247,7 @@ class Localizer_DEQ(LocalizerBase):
 
     #     h_kp = self.proj_h(FNO_output)
 
-    #     strain_kp = self.proj_eps(FNO_output) * self.strain_scaling
+    #     strain_kp = self.proj_eps(FNO_output) * self.constlaw.strain_scaling
 
     #     strain_kp = self.filter_result(strain_kp)
 
@@ -306,7 +299,7 @@ class Localizer_DEQ(LocalizerBase):
             strain_pred = hstar
 
         if self.config.return_resid:
-            resid = F(hstar.detach()) - hstar
+            resid = F(hstar) - hstar
             return strain_pred, resid
         else:
             return strain_pred

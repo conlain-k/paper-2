@@ -26,6 +26,15 @@ SCRATCH_DIR = "/storage/home/hcoda1/3/ckelly84/scratch/"
 CHECKPOINT_DIR = "checkpoints"
 
 
+def upsample_field(f, fac):
+    # upsample z then x then y
+    return (
+        f.repeat_interleave(fac, dim=-3)
+        .repeat_interleave(fac, dim=-2)
+        .repeat_interleave(fac, dim=-1)
+    )
+
+
 def write_dataset_to_h5(dataset, name, h5_file):
 
     if isinstance(dataset, torch.Tensor):
@@ -76,6 +85,17 @@ def human_format(num):
         num /= 1000.0
     return "{}{}".format(
         "{:f}".format(num).rstrip("0").rstrip("."), ["", "K", "M", "B", "T"][magnitude]
+    )
+
+
+# take a batched average norem of a batch of 6-vectors corresponding to rank-2 symmetric tensors (strain, stress)
+def batched_vec_avg_norm(field):
+    # first take volume average, then take L2 norm for each batch entry
+    # keep old shape around for broadcasting
+    return (
+        (field.mean(dim=(-3, -2, -1), keepdim=True) ** 2)
+        .sum(dim=1, keepdim=True)
+        .sqrt()
     )
 
 

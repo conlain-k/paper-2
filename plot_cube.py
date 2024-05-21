@@ -16,6 +16,8 @@ def plot_cube(
     cmap="turbo",
     edges_kw=dict(color="0.3", linewidth=1, linestyle="--", zorder=10),
 ):
+    
+    im = torch.fft.fftshift(im)
 
     if isinstance(im, torch.Tensor):
         im = im.detach().numpy()
@@ -159,7 +161,7 @@ def plot_cube(
     fig.tight_layout()
 
     if savedir is not None:
-        plt.savefig(savedir, transparent=True, dpi=300)
+        plt.savefig(savedir, transparent=True, dpi=300, facecolor="white")
         plt.close()
 
     else:

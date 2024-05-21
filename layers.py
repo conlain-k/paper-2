@@ -331,24 +331,44 @@ class ProjectionBlock(torch.nn.Module):
         activ_type="gelu",
         use_weight_norm=False,
         final_bias=False,
+        final_activ=False,
+        normalize=False,
     ):
         super().__init__()
         # put larger dimension through the activation
         hidden_channels = hidden_channels or max(in_channels, out_channels)
 
         self.proj_1 = torch.nn.Conv3d(in_channels, hidden_channels, kernel_size=1)
-
-        self.activ = get_activ(activ_type, hidden_channels)
-
         self.proj_2 = torch.nn.Conv3d(
             hidden_channels, out_channels, kernel_size=1, bias=final_bias
         )
+
+        self.activ_1 = get_activ(activ_type, hidden_channels)
+        self.final_activ = final_activ
+        self.normalize = normalize
+
+        # set up activation
+        if final_activ:
+            self.activ_2 = get_activ(activ_type, hidden_channels)
+
+        # set up normalization
+        if normalize:
+            self.norm = torch.nn.GroupNorm(1, hidden_channels)
+
         if use_weight_norm:
             self.proj_1 = weight_norm(self.proj_1)
             self.proj_2 = weight_norm(self.proj_2)
 
     def forward(self, x):
         x = self.proj_1(x)
-        x = self.activ(x)
+        x = self.activ_1(x)
+
+        if self.normalize:
+            # normalize before second projection layer
+            x = self.norm(x)
         x = self.proj_2(x)
+        # apply final activation (if relevant)
+        if self.final_activ:
+            x = self.activ_2(x)
+
         return x
