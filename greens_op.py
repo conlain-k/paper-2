@@ -194,7 +194,7 @@ class GreensOp(torch.nn.Module):
         # normalize by avg strain (assumes average matches true avg and is nonzero)
         mean_strain = batched_vec_avg_norm(strain)
 
-        print(mean_strain)
+        # print(mean_strain)
 
         # also remove mean strain from residual term
         resid_compat = self.project_S(strain - mean_strain)

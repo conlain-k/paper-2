@@ -5,6 +5,7 @@ import fourier_conv
 from torch.nn.utils.parametrizations import weight_norm
 
 from layers import ProjectionBlock, get_activ
+from helpers import print_activ_map
 
 
 class FNO(torch.nn.Module):
@@ -19,7 +20,7 @@ class FNO(torch.nn.Module):
         activ_type="gelu",
         use_weight_norm=False,
         modes=(10, 10),
-        use_MLP=True,
+        use_MLP=False,
         **kwargs,
     ):
         super().__init__()
@@ -27,11 +28,11 @@ class FNO(torch.nn.Module):
         self.lift = ProjectionBlock(
             in_channels,
             mid_channels,
+            hidden_channels=final_projection_channels,
             activ_type=activ_type,
             use_weight_norm=use_weight_norm,
+            final_activ=False,
             final_bias=True,
-            final_activ=True,
-            normalize=True,
         )
         self.proj = ProjectionBlock(
             mid_channels,
@@ -39,9 +40,8 @@ class FNO(torch.nn.Module):
             hidden_channels=final_projection_channels,
             activ_type=activ_type,
             use_weight_norm=use_weight_norm,
-            final_bias=False,
             final_activ=False,
-            normalize=True,
+            final_bias=False,
         )
 
         blocks = []
@@ -114,6 +114,7 @@ class FNO_Block(torch.nn.Module):
         if normalize:
             # group size = 1 (a.k.a. easy layernorm)
             self.norm_0 = torch.nn.GroupNorm(1, mid_channels)
+            self.norm_1 = torch.nn.GroupNorm(1, mid_channels)
 
         # add another local FC layer before activation
         self.use_MLP = use_MLP
@@ -134,20 +135,32 @@ class FNO_Block(torch.nn.Module):
         if self.resid_conn:
             x0 = x
 
+        # print_activ_map(x)
+
         # normalize before input
         if self.normalize:
             x = self.norm_0(x)
+        # print_activ_map(x)
 
         x1 = self.conv(x)
+
+        if self.normalize:
+            x1 = self.norm_1(x1)
+        # print_activ_map(x1)
         if self.use_MLP:
             x1 = self.mlp_layer(x1)
+            # print_activ_map(x1)
+
         x2 = self.filt(x)
+        # print_activ_map(x2)
 
         # now apply activation
         x = self.activ(x1 + x2)
+        # print_activ_map(x)
 
         if self.resid_conn:
             # residual connection
             x += x0
+        # print_activ_map(x)
 
         return x

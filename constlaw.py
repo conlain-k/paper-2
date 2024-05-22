@@ -17,18 +17,19 @@ class StrainToStress_base(torch.nn.Module):
         self.register_buffer("C_ref", torch.zeros((6, 6)))
         self.register_buffer("S_ref", torch.zeros((6, 6)))
 
-        self.strain_scaling = 1
-        self.stress_scaling = 1
-        self.energy_scaling = 1
+        self.stiffness_scaling = None
+        self.strain_scaling = None
+        self.stress_scaling = None
+        self.energy_scaling = None
 
     def set_scalings(self, eps_bar):
         frob = lambda x: (x**2).sum().sqrt()
+        self.stiffness_scaling = frob(self.C_ref)
         self.strain_scaling = frob(eps_bar)
 
-        # stress corresponding to references
-        self.stress_scaling = frob(self.C_ref @ eps_bar)
-        # energy corresponding to references
-        self.energy_scaling = frob((eps_bar @ (self.C_ref @ eps_bar)))
+        # compute other scalings downstream of this one
+        self.stress_scaling = self.stiffness_scaling * self.strain_scaling
+        self.energy_scaling = self.stress_scaling * self.strain_scaling
 
     def compute_C_matrix(self, lamb, mu):
         new_mat = torch.zeros((6, 6), dtype=torch.float32, requires_grad=False)

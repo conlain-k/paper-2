@@ -11,6 +11,7 @@ from layers import SimpleLayerNet, TinyVNet, ProjectionBlock
 import torch
 from torchdeq import get_deq, mem_gc
 from torch.utils.checkpoint import checkpoint
+from helpers import print_activ_map
 
 
 def make_model(config, input_channels, output_channels):
@@ -39,7 +40,7 @@ def make_localizer(config):
 
 
 class LocalizerBase(torch.nn.Module):
-    # base class for localization models
+    # base class for localization mx_powerodels
     def __init__(self, config):
         super().__init__()
 
@@ -60,12 +61,16 @@ class LocalizerBase(torch.nn.Module):
         self.constlaw = StrainToStress_2phase(E_vals, nu_vals)
         self.eps_bar = torch.as_tensor(eps_bar)
 
-        if self.config.add_Green_iter:
-            self.greens_op = GreensOp(self.constlaw, self.config.num_voxels)
+        # if self.config.add_Green_iter:
+        self.greens_op = GreensOp(self.constlaw, self.config.num_voxels)
 
         # take frob norm of a given quantity
 
         self.constlaw.set_scalings(self.eps_bar)
+        self.register_buffer(
+            "scaled_average_strain",
+            self.eps_bar.reshape(1, 6, 1, 1, 1) / self.constlaw.strain_scaling,
+        )
 
     def set_constlaw_crystal(self, C11, C12, C44):
         self.constlaw = StrainToStress_crystal(C11, C12, C44)
@@ -73,8 +78,14 @@ class LocalizerBase(torch.nn.Module):
         self.constlaw.set_scalings(self.eps_bar)
 
     def enforce_zero_mean(self, x):
+
+        # compute mean in double
+        # x = x.double()
         # remove the average value from a field (for each instance, channel)
         xmean = x.mean(dim=(-3, -2, -1), keepdim=True)
+
+        # now downcast to float
+        # xmean = xmean.float()
         xp = x - xmean
         # print("mean", xmean[0].mean(dim=(-3, -2, -1)))
         # print("X", x[0].mean(dim=(-3, -2, -1)))
@@ -86,11 +97,12 @@ class LocalizerBase(torch.nn.Module):
     #     return eps
 
     def filter_result(self, x):
+
         if self.config.enforce_mean:
             x = self.enforce_zero_mean(x)
 
         # either way, add mean strain as correction
-        x += self.eps_bar.reshape(1, 6, 1, 1, 1)
+        # x += self.scaled_average_strain
 
         return x
 
@@ -109,6 +121,7 @@ class Localizer_FeedForward(LocalizerBase):
 
         x = self.net(m)
         x = self.filter_result(x)
+        x = (x + self.scaled_average_strain) * self.constlaw.strain_scaling
 
         return x
 
@@ -145,7 +158,7 @@ class Localizer_DEQ(LocalizerBase):
     def encode_micro_strain(self, strain, C_field, m):
         # encode microstructure and strain field
         # always use strain as input
-        feat = [strain / self.constlaw.strain_scaling]
+        feat = [strain]
 
         # precompute stress for convenience
         stress = self.constlaw(strain, C_field)
@@ -156,20 +169,20 @@ class Localizer_DEQ(LocalizerBase):
 
         # build up features
         if self.config.use_stress:
-            feat.append(stress / self.constlaw.stress_scaling)
+            feat.append(stress)
 
         if self.config.use_stress_polarization:
             # negate stress polarization to get positive-ish values
             stress_polar = -1 * self.constlaw.stress_pol(strain, C_field)
-            feat.append(stress_polar / self.constlaw.stress_scaling)
+            feat.append(stress_polar)
 
         if self.config.use_energy:
             strain_energy = compute_strain_energy(strain, stress)
-            feat.append(strain_energy / self.constlaw.energy_scaling)
+            feat.append(strain_energy)
 
         # if self.config.use_bc_strain:
-        #     eps_avg = self.compute_init_strain(m, None)
-        #     feat.append(eps_avg / self.constlaw.strain_scaling)
+        #     eps_avg = self.compute_init_scaled_strain(m, None)
+        #     feat.append(eps_avg )
 
         # collect features into a vector
         nn_features = torch.concatenate(feat, dim=1)
@@ -181,7 +194,7 @@ class Localizer_DEQ(LocalizerBase):
         # now return dense feat vec
         return nn_features
 
-    def compute_init_strain(self, micro, init_guess):
+    def compute_init_scaled_strain(self, micro, init_guess):
         # micro should be
         # get initial strain field
         if init_guess is not None:
@@ -190,16 +203,23 @@ class Localizer_DEQ(LocalizerBase):
         # eps should be b * 6 * xyz (since 6 indep strain components)
         Nx = self.config.num_voxels
 
-        return micro.new_ones((eps_shape[0], 6, Nx, Nx, Nx)) * self.eps_bar.reshape(
-            1, 6, 1, 1, 1
+        # broadcast avg strain to all locations
+        init_strain = (
+            micro.new_ones((eps_shape[0], 6, Nx, Nx, Nx)) * self.scaled_average_strain
         )
+
+        return init_strain
 
     def single_iter_simple(self, strain_k, C_field, m):
         """
         Given a stiffness tensor C corresponding to micro m, update the current strain field using the neural net
         """
 
-        z_k = self.encode_micro_strain(strain_k, C_field, m)
+        # print("\nStarting iter")
+
+        # print_activ_map(strain_k)
+
+        z_k = self.encode_micro_strain(strain_k.detach(), C_field, m)
 
         if self.config.add_Green_iter:
             # get moulinec-suquet update
@@ -207,16 +227,22 @@ class Localizer_DEQ(LocalizerBase):
             # hopefully this stabilizes training
             eps_ms = self.greens_op.forward(strain_k.detach(), C_field)
             z_ms = self.encode_micro_strain(eps_ms, C_field, m)
+
             # stack on M-S features after current features
             z_k = torch.concatenate([z_k, z_ms], dim=1)
 
         # predict new strain perturbation
-        strain_kp = self.forward_net(z_k) * self.constlaw.strain_scaling
+        strain_kp = self.forward_net(z_k)
 
         if self.config.use_skip_update:
             strain_kp += strain_k
 
+        # print_activ_map(strain_kp)
+
         strain_kp = self.filter_result(strain_kp)
+        # print_activ_map(strain_kp)
+
+        assert not torch.isnan(strain_kp).any()
 
         return strain_kp
 
@@ -258,6 +284,9 @@ class Localizer_DEQ(LocalizerBase):
     #     return eh_kp
 
     def forward(self, m):
+
+        # print(torch.cuda.memory_summary())
+
         C_field = self.constlaw.compute_C_field(m)
 
         # print("HH", m.shape, C_field.shape)
@@ -267,7 +296,15 @@ class Localizer_DEQ(LocalizerBase):
 
         # just iterate over strain dim directly
         F = lambda h: self.single_iter_simple(h, C_field, m)
-        h0 = self.compute_init_strain(m, None)  # * 0
+        h0 = self.compute_init_scaled_strain(m, None) * 0
+
+        # print_activ_map(h0)
+
+        # pre-scale before input to the network
+        C_field /= self.constlaw.stiffness_scaling
+        # h0 already scaled
+        # h0 /= self.constlaw.stiffness_scaling
+        # print_activ_map(h0)
 
         # randomize # iters during train time
         if self.config.deq_randomize_max and self.training:
@@ -292,8 +329,15 @@ class Localizer_DEQ(LocalizerBase):
         else:
             strain_pred = hstar
 
+        # rescale back to physical units
+        strain_pred = (
+            strain_pred + self.scaled_average_strain
+        ) * self.constlaw.strain_scaling
+
         if self.config.return_resid:
             resid = F(hstar) - hstar
+            resid *= self.constlaw.strain_scaling
             return strain_pred, resid
+
         else:
             return strain_pred

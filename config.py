@@ -9,20 +9,20 @@ DELIM = "-" * 40
 lam_strain = 1
 lam_stress = 1
 lam_energy = 1
-lam_err_energy = 0
-# lam_stressdiv = 0.1
-lam_stressdiv = 0
+lam_err_energy = 1
+lam_compat = 0.1
+lam_compat = 0
 
-lam_sum = lam_strain + lam_stress + lam_energy  # + lam_stressdiv + lam_err_energy
+lam_sum = lam_strain + lam_stress + lam_energy + lam_compat + lam_err_energy
 
 lam_strain = lam_strain / lam_sum
 lam_stress = lam_stress / lam_sum
 lam_energy = lam_energy / lam_sum
 # lam_err_energy = lam_err_energy / lam_sum
-# lam_stressdiv = lam_stressdiv / lam_sum
+lam_compat = lam_compat / lam_sum
 
 # residual error is usually small anyways, and we want our DEQ gradients to be accurate
-lam_resid = 1000
+lam_resid = 100
 
 
 @dataclass
@@ -41,15 +41,15 @@ class Config:
 
     loader_args: dict = field(
         default_factory=lambda: {
-            DataMode.TRAIN: {"batch_size": 16, "shuffle": True, "num_workers": 2},
-            DataMode.VALID: {"batch_size": 256, "shuffle": False, "num_workers": 2},
-            DataMode.TEST: {"batch_size": 256, "shuffle": False, "num_workers": 2},
+            DataMode.TRAIN: {"batch_size": 32, "shuffle": True, "num_workers": 1},
+            DataMode.VALID: {"batch_size": 128, "shuffle": False, "num_workers": 1},
+            DataMode.TEST: {"batch_size": 128, "shuffle": False, "num_workers": 1},
         }
     )
 
     # Should we use a fixed maximum # iters, or randomize over training
     deq_randomize_max: bool = True
-    deq_min_iter: int = 5
+    deq_min_iter: int = 3
 
     deq_args: dict = field(
         default_factory=lambda: {
@@ -59,8 +59,6 @@ class Config:
             "b_max_iter": 16,
             "f_tol": 1e-4,
             "b_tol": 1e-5,
-            # use last 3 steps
-            # "grad": 5,
             "use_ift": True,
         }
     )
@@ -68,7 +66,7 @@ class Config:
         default_factory=lambda: {
             "modes": (12,),
             "normalize": True,
-            "activ_type": "softplus",
+            "activ_type": "gelu",
             "init_weight_scale": 0.01,
             # IMPORTANT: lift into higher dim before projection (original paper does this)
             "use_weight_norm": True,
@@ -97,7 +95,7 @@ class Config:
     # output_displacement: bool = False
     compute_stressdiv: bool = True
 
-    grad_clip_mag: float = 100
+    grad_clip_mag: float = 10
     use_skip_update: bool = False
     enforce_mean: bool = True
 
@@ -113,13 +111,13 @@ class Config:
     # domain length in one direction
     num_voxels: int = 31
 
-    H1_deriv_scaling: float = 10
+    H1_deriv_scaling: float = 100
 
     # default to global values, but allow overwrite
     lam_strain: float = lam_strain
     lam_stress: float = lam_stress
     lam_energy: float = lam_energy
-    lam_stressdiv: float = lam_stressdiv
+    lam_compat: float = lam_compat
     lam_resid: float = lam_resid
 
     def __post_init__(self):
@@ -154,7 +152,7 @@ class LossSet:
     energy_loss: float = 0
     err_energy_loss: float = 0
     resid_loss: float = 0
-    stressdiv_loss: float = 0
+    compat_loss: float = 0
 
     def __add__(self, other):
         # total_loss = self.total_loss + other.total_loss
@@ -163,7 +161,7 @@ class LossSet:
         energy_loss = self.energy_loss + other.energy_loss
         err_energy_loss = self.err_energy_loss + other.err_energy_loss
         resid_loss = self.resid_loss + other.resid_loss
-        stressdiv_loss = self.stressdiv_loss + other.stressdiv_loss
+        compat_loss = self.compat_loss + other.compat_loss
 
         return LossSet(
             self.config,
@@ -172,7 +170,7 @@ class LossSet:
             energy_loss,
             err_energy_loss,
             resid_loss,
-            stressdiv_loss,
+            compat_loss,
         )
 
     def __truediv__(self, x):
@@ -181,7 +179,7 @@ class LossSet:
         energy_loss = self.energy_loss / x
         err_energy_loss = self.err_energy_loss / x
         resid_loss = self.resid_loss / x
-        stressdiv_loss = self.stressdiv_loss / x
+        compat_loss = self.compat_loss / x
 
         return LossSet(
             self.config,
@@ -190,7 +188,7 @@ class LossSet:
             energy_loss,
             err_energy_loss,
             resid_loss,
-            stressdiv_loss,
+            compat_loss,
         )
 
     def compute_total(self):
@@ -202,8 +200,8 @@ class LossSet:
             loss += lam_stress * self.stress_loss
         if lam_energy > 0:
             loss += lam_energy * self.energy_loss
-        if lam_stressdiv > 0:
-            loss += lam_stressdiv * self.stressdiv_loss
+        if lam_compat > 0:
+            loss += lam_compat * self.compat_loss
 
         if lam_err_energy > 0:
             loss += lam_err_energy * self.err_energy_loss
@@ -221,7 +219,7 @@ class LossSet:
             self.energy_loss.detach(),
             self.err_energy_loss.detach(),
             self.resid_loss.detach(),
-            self.stressdiv_loss.detach(),
+            self.compat_loss.detach(),
         )
 
     def to_dict(self):
@@ -233,8 +231,8 @@ class LossSet:
             "energy_loss": self.energy_loss,
             "err_energy_loss": self.err_energy_loss,
             "resid_loss": self.resid_loss,
-            "stressdiv_loss": self.stressdiv_loss,
+            "compat_loss": self.compat_loss,
         }
 
     def __repr__(self):
-        return f"strain loss is {self.strain_loss:.5}, stress loss is {self.stress_loss:.5}, energy loss is {self.energy_loss:.5}, err energy loss is {self.err_energy_loss:.5}, resid loss is {self.resid_loss:.5}, stressdiv loss is {self.stressdiv_loss:.5}"
+        return f"strain loss is {self.strain_loss:.5}, stress loss is {self.stress_loss:.5}, energy loss is {self.energy_loss:.5}, err energy loss is {self.err_energy_loss:.5}, resid loss is {self.resid_loss:.5}, compat loss is {self.compat_loss:.5}"
