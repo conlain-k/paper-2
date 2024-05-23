@@ -171,7 +171,7 @@ class Localizer_DEQ(LocalizerBase):
             feat.append(stress)
 
         if self.config.use_stress_polarization:
-            stress_polar = self.constlaw.stress_pol(strain, C_field)
+            stress_polar = self.constlaw.stress_pol(strain, C_field, scaled=True)
             # negate stress polarization to get positive-ish values
             # stress_polar *= -1
             feat.append(stress_polar)
@@ -219,7 +219,7 @@ class Localizer_DEQ(LocalizerBase):
 
         # print_activ_map(strain_k)
 
-        z_k = self.encode_micro_strain(strain_k, C_field, m)
+        z_k = self.encode_micro_strain(strain_k.detach(), C_field, m)
 
         if self.config.add_Green_iter:
             # get moulinec-suquet update

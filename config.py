@@ -10,19 +10,18 @@ lam_strain = 1
 lam_stress = 1
 lam_energy = 1
 lam_err_energy = 0
-lam_compat = 0.1
-lam_compat = 0
 
-lam_sum = lam_strain + lam_stress + lam_energy + lam_compat + lam_err_energy
+# penalize compatibility error heavily
+lam_compat = 10
+
+lam_sum = lam_strain + lam_stress + lam_energy
 
 lam_strain = lam_strain / lam_sum
 lam_stress = lam_stress / lam_sum
 lam_energy = lam_energy / lam_sum
-# lam_err_energy = lam_err_energy / lam_sum
-lam_compat = lam_compat / lam_sum
 
 # residual error is usually small anyways, and we want our DEQ gradients to be accurate
-lam_resid = 100
+lam_resid = 1000
 
 
 @dataclass
@@ -94,7 +93,7 @@ class Config:
 
     # whether to output strain or displacement
     # output_displacement: bool = False
-    compute_stressdiv: bool = False
+    compute_compat_err: bool = True
 
     grad_clip_mag: float = 10
     use_skip_update: bool = False

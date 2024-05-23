@@ -71,17 +71,15 @@ def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst, resid):
     VM_stress_pred = VMStress(stress_pred)
     VM_stress_true = VMStress(stress_true)
 
-    stressdiv_true = stressdiv(stress_true, use_FFT_deriv=False)
-    stressdiv_pred = stressdiv(stress_pred, use_FFT_deriv=False)
+    compat_err_true, _ = model.greens_op.compute_residuals(strain_true, stress_true)
+    compat_err_pred, _ = model.greens_op.compute_residuals(strain_pred, stress_pred)
 
-    print(stressdiv_true.shape, stressdiv_pred.shape)
-
-    print("Stressdiv stats")
+    print("Compatibility error stats")
     print(
-        f"true: min {stressdiv_true.min()}, max {stressdiv_true.max()}, mean {stressdiv_true.mean()}, std {stressdiv_true.std()}"
+        f"true: min {compat_err_true.min()}, max {compat_err_true.max()}, mean {compat_err_true.mean()}, std {compat_err_true.std()}"
     )
     print(
-        f"pred: min {stressdiv_pred.min()}, max {stressdiv_pred.max()}, mean {stressdiv_pred.mean()}, std {stressdiv_pred.std()}"
+        f"pred: min {compat_err_pred.min()}, max {compat_err_pred.max()}, mean {compat_err_pred.mean()}, std {compat_err_pred.std()}"
     )
     # Plot z=const slice
     sind = s_[:, :, ind_worst[-1]]
@@ -123,9 +121,9 @@ def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst, resid):
     plot_pred(
         epoch,
         micro[0, 0][sind],
-        stressdiv_true[0, 0][sind] / model.constlaw.stress_scaling,
-        stressdiv_pred[0, 0][sind] / model.constlaw.stress_scaling,
-        "stressdiv",
+        compat_err_true[0, 0][sind],
+        compat_err_pred[0, 0][sind],
+        "compat_err",
         model.config.image_dir,
     )
 
@@ -169,23 +167,23 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
     stress_pred, _, energy_pred = compute_quants(model, strain_pred, C_field)
     stress_true, _, energy_true = compute_quants(model, strain_true, C_field)
 
-    strain_loss = PRMS_loss(
+    strain_loss = H1_loss(
         strain_true,
         strain_pred,
         scale=model.constlaw.strain_scaling,
-        # deriv_scale=model.config.H1_deriv_scaling,
+        deriv_scale=model.config.H1_deriv_scaling,
     )
-    stress_loss = PRMS_loss(
+    stress_loss = H1_loss(
         stress_true,
         stress_pred,
         scale=model.constlaw.stress_scaling,
-        # deriv_scale=model.config.H1_deriv_scaling,
+        deriv_scale=model.config.H1_deriv_scaling,
     )
-    energy_loss = PRMS_loss(
+    energy_loss = H1_loss(
         energy_true,
         energy_pred,
         scale=model.constlaw.energy_scaling,
-        # deriv_scale=model.config.H1_deriv_scaling,
+        deriv_scale=model.config.H1_deriv_scaling,
     )
 
     err_energy = compute_strain_energy(
@@ -202,7 +200,7 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
     if model.config.return_resid:
         resid_loss = 100 * (resid**2).mean().sqrt() / model.constlaw.strain_scaling
 
-    if model.config.compute_stressdiv:
+    if model.config.compute_compat_err:
 
         err_compat, _ = model.greens_op.compute_residuals(strain_pred, stress_pred)
         # compute RMSE, averaged across channels/batch, converted to percent
