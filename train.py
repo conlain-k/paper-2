@@ -254,23 +254,23 @@ def compute_losses(model, quants_pred, quants_true, resid):
     strain_pred, stress_pred, energy_pred = quants_pred
     strain_true, stress_true, energy_true = quants_true
 
-    strain_loss = H1_loss(
+    strain_loss = PRMS_loss(
         strain_true,
         strain_pred,
         scale=model.strain_scaling,
-        deriv_scale=model.config.H1_deriv_scaling,
+        # deriv_scale=model.config.H1_deriv_scaling,
     )
-    stress_loss = H1_loss(
+    stress_loss = PRMS_loss(
         stress_true,
         stress_pred,
         scale=model.stress_scaling,
-        deriv_scale=model.config.H1_deriv_scaling,
+        # deriv_scale=model.config.H1_deriv_scaling,
     )
-    energy_loss = H1_loss(
+    energy_loss = PRMS_loss(
         energy_true,
         energy_pred,
         scale=model.energy_scaling,
-        deriv_scale=model.config.H1_deriv_scaling,
+        # deriv_scale=model.config.H1_deriv_scaling,
     )
 
     err_energy = compute_strain_energy(
@@ -279,18 +279,16 @@ def compute_losses(model, quants_pred, quants_true, resid):
 
     err_energy_loss = 100 * (err_energy**2).mean().sqrt() / model.energy_scaling
 
-    resid_loss = 0
-    stressdiv_loss = 0
+    resid_loss = torch.as_tensor(0.0)
+    compat_loss = torch.as_tensor(0.0)
 
     if model.config.return_resid:
         resid_loss = 100 * (resid**2).mean().sqrt() / model.strain_scaling
 
     if model.config.compute_stressdiv:
-        stressdiv_loss = (
-            100
-            * (stressdiv(stress_pred, use_FFT_deriv=True) ** 2).mean().sqrt()
-            / model.stress_scaling
-        )
+
+        err_compat, _ = model.greens_op.compute_residuals(strain_pred, stress_pred)
+        compat_loss = 100 * batched_vec_avg_norm(err_compat).mean()
 
     losses = LossSet(
         model.config,
@@ -299,7 +297,7 @@ def compute_losses(model, quants_pred, quants_true, resid):
         energy_loss,
         err_energy_loss,
         resid_loss,
-        stressdiv_loss,
+        compat_loss,
     )
 
     return losses.detach(), losses.compute_total()
@@ -493,7 +491,7 @@ def train_model(model, config, train_loader, valid_loader):
         model.parameters(), lr=config.lr_max, weight_decay=config.weight_decay
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, config.num_epochs, eta_min=1e-8
+        optimizer, config.num_epochs, eta_min=1e-6
     )
     # scheduler = torch.optim.lr_scheduler.OneCycleLR(
     #     optimizer,
@@ -503,7 +501,13 @@ def train_model(model, config, train_loader, valid_loader):
     #     pct_start=0.2,  # first 20% is increase, then anneal
     # )
 
-    print(model.strain_scaling, model.stress_scaling, model.energy_scaling)
+    print(
+        "Scalings",
+        model.strain_scaling,
+        # model.constlaw.stiffness_scaling,
+        model.stress_scaling,
+        model.energy_scaling,
+    )
 
     for e in range(config.num_epochs):
         print(DELIM)
@@ -571,6 +575,8 @@ def train_model(model, config, train_loader, valid_loader):
             # now accumulate losses for future
             running_loss += total_loss.detach() / len(train_loader)
 
+            print(f"batch {batch_ind}: {total_loss.detach().item():5}")
+
             # printing once per epoch
             if batch_ind == 0:
                 # print split on first batch to track progress
@@ -579,10 +585,16 @@ def train_model(model, config, train_loader, valid_loader):
                     f"Normalized e_xx absolute error is: {(strain_pred - strain_true)[:, 0].abs().mean() / model.strain_scaling * 100:.5} %"
                 )
                 print(
-                    f"Pred range: min {strain_pred[:, 0].min():.5}, max {strain_pred[:, 0].max():.5}, mean {strain_pred[:, 0].mean():.5}, std {strain_pred[:, 0].std():.5}"
+                    f"Strain Pred range: min {strain_pred[:, 0].min():5}, max {strain_pred[:, 0].max():5}, mean {strain_pred[:, 0].mean():5}, std {strain_pred[:, 0].std():5}"
                 )
                 print(
-                    f"True range: min {strain_true[:, 0].min():.5}, max {strain_true[:, 0].max():.5}, mean {strain_true[:, 0].mean():.5}, std {strain_true[:, 0].std():.5}"
+                    f"Strain True range: min {strain_true[:, 0].min():5}, max {strain_true[:, 0].max():5}, mean {strain_true[:, 0].mean():5}, std {strain_true[:, 0].std():5}"
+                )
+                print(
+                    f"Stress Pred range: min {stress_pred[:, 0].min():5}, max {stress_pred[:, 0].max():5}, mean {stress_pred[:, 0].mean():5}, std {stress_pred[:, 0].std():5}"
+                )
+                print(
+                    f"Stress True range: min {stress_true[:, 0].min():5}, max {stress_true[:, 0].max():5}, mean {stress_true[:, 0].mean():5}, std {stress_true[:, 0].std():5}"
                 )
 
         # end epoch

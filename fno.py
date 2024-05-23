@@ -19,7 +19,7 @@ class FNO(torch.nn.Module):
         activ_type="gelu",
         use_weight_norm=False,
         modes=(10, 10),
-        use_MLP=True,
+        use_MLP=False,
         **kwargs,
     ):
         super().__init__()
@@ -29,8 +29,8 @@ class FNO(torch.nn.Module):
             mid_channels,
             activ_type=activ_type,
             use_weight_norm=use_weight_norm,
-            final_bias=True,
-            final_activ=True,
+            # final_bias=True,
+            # final_activ=True,
         )
         self.proj = ProjectionBlock(
             mid_channels,
@@ -119,8 +119,8 @@ class FNO_Block(torch.nn.Module):
                 mid_channels,
                 activ_type=activ_type,
                 use_weight_norm=use_weight_norm,
-                final_bias=True,
-                final_activ=True,
+                # final_bias=True,
+                # final_activ=True,
             )
 
     # just the middle bit of an FNO

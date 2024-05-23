@@ -71,11 +71,11 @@ class LocalizerBase(torch.nn.Module):
         # print((self.eps_bar @ self.constlaw.C_ref @ self.eps_bar).shape)
         self.strain_scaling = frob(self.eps_bar)
 
+        stiff_scaling = frob(self.constlaw.C_ref)
+
         # stress corresponding to a scaled strain
-        self.stress_scaling = frob(self.constlaw.C_ref @ self.eps_bar)
-        self.energy_scaling = frob(
-            (self.eps_bar @ (self.constlaw.C_ref @ self.eps_bar))
-        )
+        self.stress_scaling = stiff_scaling * self.strain_scaling
+        self.energy_scaling = self.stress_scaling * self.strain_scaling
 
         # print(self.strain_scaling, self.stress_scaling, self.energy_scaling)
         # print(self.eps_bar)

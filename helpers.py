@@ -3,6 +3,8 @@ import json
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from inspect import currentframe, getframeinfo
+import inspect
 
 import h5py
 
@@ -24,6 +26,15 @@ class StructureType(str, Enum):
 SCRATCH_DIR = "/storage/home/hcoda1/3/ckelly84/scratch/"
 
 CHECKPOINT_DIR = "checkpoints"
+
+
+def upsample_field(f, fac):
+    # upsample z then x then y
+    return (
+        f.repeat_interleave(fac, dim=-3)
+        .repeat_interleave(fac, dim=-2)
+        .repeat_interleave(fac, dim=-1)
+    )
 
 
 def write_dataset_to_h5(dataset, name, h5_file):
@@ -79,6 +90,17 @@ def human_format(num):
     )
 
 
+# take a batched average norem of a batch of 6-vectors corresponding to rank-2 symmetric tensors (strain, stress)
+def batched_vec_avg_norm(field):
+    # first take volume average, then take L2 norm for each batch entry
+    # keep old shape around for broadcasting
+    return (
+        (field.mean(dim=(-3, -2, -1), keepdim=True) ** 2)
+        .sum(dim=1, keepdim=True)
+        .sqrt()
+    )
+
+
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -103,6 +125,31 @@ def load_conf_override(conf_file):
 
     # store this in the conf dict for later
     return conf_args
+
+
+def print_activ_map(x, abs=True):
+    with torch.no_grad():
+        x = x.detach()
+        # print channel-wise power of an intermediate state x, along with line #
+        cf = currentframe()
+        line_num = cf.f_back.f_lineno
+        filename = getframeinfo(cf.f_back).filename
+
+        function_name = inspect.stack()[1].function
+
+        # average out space and batch
+        if abs:
+            x = x**2
+        x_power = x.mean(dim=(-3, -2, -1, 0))
+
+        if abs:
+            x_power = x_power.sqrt()
+
+        print(f"File {filename}:{line_num} ({function_name}) activ is {x_power}")
+
+        del x_power
+
+        del x
 
 
 def save_checkpoint(model, optim, sched, epoch, loss, best=False, ema_model=None):

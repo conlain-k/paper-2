@@ -41,9 +41,9 @@ class Config:
 
     loader_args: dict = field(
         default_factory=lambda: {
-            DataMode.TRAIN: {"batch_size": 16, "shuffle": True, "num_workers": 2},
-            DataMode.VALID: {"batch_size": 256, "shuffle": False, "num_workers": 2},
-            DataMode.TEST: {"batch_size": 256, "shuffle": False, "num_workers": 2},
+            DataMode.TRAIN: {"batch_size": 32, "shuffle": True, "num_workers": 1},
+            DataMode.VALID: {"batch_size": 256, "shuffle": False, "num_workers": 1},
+            DataMode.TEST: {"batch_size": 256, "shuffle": False, "num_workers": 1},
         }
     )
 
@@ -95,7 +95,7 @@ class Config:
 
     # whether to output strain or displacement
     # output_displacement: bool = False
-    compute_stressdiv: bool = True
+    compute_stressdiv: bool = False
 
     grad_clip_mag: float = 100
     use_skip_update: bool = False
