@@ -41,7 +41,7 @@ class Config:
 
     loader_args: dict = field(
         default_factory=lambda: {
-            DataMode.TRAIN: {"batch_size": 32, "shuffle": True, "num_workers": 1},
+            DataMode.TRAIN: {"batch_size": 16, "shuffle": True, "num_workers": 1},
             DataMode.VALID: {"batch_size": 128, "shuffle": False, "num_workers": 1},
             DataMode.TEST: {"batch_size": 128, "shuffle": False, "num_workers": 1},
         }
@@ -153,6 +153,7 @@ class LossSet:
     err_energy_loss: float = 0
     resid_loss: float = 0
     compat_loss: float = 0
+    is_prms:bool = False
 
     def __add__(self, other):
         # total_loss = self.total_loss + other.total_loss
@@ -221,6 +222,9 @@ class LossSet:
             self.resid_loss.detach(),
             self.compat_loss.detach(),
         )
+    
+    def to_PRMS(self):
+        # convert to percent mean-square error
 
     def to_dict(self):
         # get all losses as dictionary

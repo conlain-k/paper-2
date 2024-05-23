@@ -14,6 +14,7 @@ class StrainToStress_base(torch.nn.Module):
         super().__init__()
 
         # store reference stiffness matrix (need to set values in child class)
+        self.register_buffer("C_ref_unscaled", torch.zeros((6, 6)))
         self.register_buffer("C_ref", torch.zeros((6, 6)))
         self.register_buffer("S_ref", torch.zeros((6, 6)))
 
@@ -30,6 +31,9 @@ class StrainToStress_base(torch.nn.Module):
         # compute other scalings downstream of this one
         self.stress_scaling = self.stiffness_scaling * self.strain_scaling
         self.energy_scaling = self.stress_scaling * self.strain_scaling
+
+        self.C_ref = self.C_ref_unscaled / self.stiffness_scaling
+        self.S_ref = torch.linalg.inv(self.C_ref)
 
     def compute_C_matrix(self, lamb, mu):
         new_mat = torch.zeros((6, 6), dtype=torch.float32, requires_grad=False)
@@ -106,7 +110,10 @@ class StrainToStress_2phase(StrainToStress_base):
 
         self.lamb_0 = self.lamb_vals.mean()
         self.mu_0 = self.mu_vals.mean()
-        self.C_ref = isotropic_mandel66(self.lamb_0, self.mu_0)
+        self.C_ref_unscaled = isotropic_mandel66(self.lamb_0, self.mu_0)
+
+        # initially no scalings
+        self.C_ref = self.C_ref_unscaled
         self.S_ref = torch.linalg.inv(self.C_ref)
 
     def compute_C_field(self, micros):

@@ -577,6 +577,7 @@ def train_model(model, config, train_loader, valid_loader):
             # now accumulate losses for future
             running_loss += total_loss.detach() / len(train_loader)
 
+            print(f"batch {batch_ind}: {total_loss.detach().item():5}")
             # printing once per epoch
             if batch_ind == 0:
                 # print split on first batch to track progress

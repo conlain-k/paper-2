@@ -102,7 +102,7 @@ class LocalizerBase(torch.nn.Module):
             x = self.enforce_zero_mean(x)
 
         # either way, add mean strain as correction
-        # x += self.scaled_average_strain
+        x += self.scaled_average_strain
 
         return x
 
@@ -288,24 +288,11 @@ class Localizer_DEQ(LocalizerBase):
 
         # print(torch.cuda.memory_summary())
 
-        C_field = self.constlaw.compute_C_field(m)
-
-        # print("HH", m.shape, C_field.shape)
-        # print(C_field[0, 0, 0, :, :, 0])
-
-        # print(C_field.min(), C_field.max())
+        C_field = self.constlaw.compute_C_field(m) / self.constlaw.stiffness_scaling
 
         # just iterate over strain dim directly
         F = lambda h: self.single_iter_simple(h, C_field, m)
-        h0 = self.compute_init_scaled_strain(m, None) * 0
-
-        # print_activ_map(h0)
-
-        # pre-scale before input to the network
-        C_field /= self.constlaw.stiffness_scaling
-        # h0 already scaled
-        # h0 /= self.constlaw.stiffness_scaling
-        # print_activ_map(h0)
+        h0 = self.compute_init_scaled_strain(m, None)
 
         # randomize # iters during train time
         if self.config.deq_randomize_max and self.training:
@@ -326,18 +313,12 @@ class Localizer_DEQ(LocalizerBase):
 
         if self.config.use_fancy_iter:
             # only project out strain if needed
-            strain_pred = hstar[:, :6]
+            strain_pred = hstar[:, :6] * self.constlaw.strain_scaling
         else:
-            strain_pred = hstar
-
-        # rescale back to physical units
-        strain_pred = (
-            strain_pred + self.scaled_average_strain
-        ) * self.constlaw.strain_scaling
+            strain_pred = hstar * self.constlaw.strain_scaling
 
         if self.config.return_resid:
-            resid = F(hstar) - hstar
-            resid *= self.constlaw.strain_scaling
+            resid = (F(hstar) - hstar) * self.constlaw.strain_scaling
             return strain_pred, resid
 
         else:
