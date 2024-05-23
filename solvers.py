@@ -172,8 +172,9 @@ class Localizer_DEQ(LocalizerBase):
             feat.append(stress)
 
         if self.config.use_stress_polarization:
+            stress_polar = self.constlaw.stress_pol(strain, C_field)
             # negate stress polarization to get positive-ish values
-            stress_polar = -1 * self.constlaw.stress_pol(strain, C_field)
+            # stress_polar *= -1
             feat.append(stress_polar)
 
         if self.config.use_energy:

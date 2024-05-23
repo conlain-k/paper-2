@@ -17,14 +17,14 @@
         ],
         "normalize": true,
         "activ_type": "gelu",
-        "init_weight_scale": 0.01,
+        "init_weight_scale": 0.1,
         "use_weight_norm": true,
-        "use_fourier_bias": true,
-        "resid_conn": false
+        "use_fourier_bias": false,
+        "resid_conn": true
     },
     "latent_dim": 24,
     "use_skip_update": false,
-    "lr_max": 1e-3,
+    "lr_max": 1e-4,
     "num_epochs": 200,
     "H1_deriv_scaling": 10
 }
