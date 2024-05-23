@@ -50,8 +50,10 @@ class StrainToStress_base(torch.nn.Module):
 
         return new_mat
 
-    def stress_pol(self, strain, C_field):
-        C_pert = C_field - self.C_ref.reshape(1, 6, 6, 1, 1, 1)
+    def stress_pol(self, strain, C_field, scaled=False):
+        # is this stiffness field scaled or not?
+        C_ref = self.C_ref if scaled else self.C_ref_unscaled
+        C_pert = C_field - C_ref.reshape(1, 6, 6, 1, 1, 1)
         # compute stress polarization
         stress_polarization = torch.einsum("brcxyz, bcxyz -> brxyz", C_pert, strain)
 

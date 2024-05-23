@@ -3,7 +3,9 @@ import json
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import AxesGrid
 from inspect import currentframe, getframeinfo
+
 import inspect
 
 import h5py
@@ -26,6 +28,12 @@ class StructureType(str, Enum):
 SCRATCH_DIR = "/storage/home/hcoda1/3/ckelly84/scratch/"
 
 CHECKPOINT_DIR = "checkpoints"
+
+
+def sync():
+    # force cuda sync if cuda is available, otherwise skip
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
 
 
 def upsample_field(f, fac):
@@ -90,7 +98,7 @@ def human_format(num):
     )
 
 
-# take a batched average norem of a batch of 6-vectors corresponding to rank-2 symmetric tensors (strain, stress)
+# take a batched norm-of-average of a batch of 6-vectors corresponding to rank-2 symmetric tensors (strain, stress)
 def batched_vec_avg_norm(field):
     # first take volume average, then take L2 norm for each batch entry
     # keep old shape around for broadcasting
@@ -186,93 +194,65 @@ def load_checkpoint(path, model, optim=None, sched=None, strict=True):
     print(f"Loading model for epoch {epoch}! Last loss was {loss:.3f}")
 
 
-# def plot_cube(im, filepath, elev=34, azim=-30):
-#     # make sure we have a numpy array
-#     if isinstance(im, torch.Tensor):
-#         im = im.detach().numpy()
+def plot_pred(epoch, micro, y_true, y_pred, field_name, image_dir):
+    vmin_t, vmax_t = y_true.min(), y_true.max()
+    vmin_p, vmax_p = y_pred.min(), y_pred.max()
+    vmin = min(vmin_t, vmin_p)
+    vmax = max(vmax_t, vmax_p)
 
-#     Ix = im[0, :, :]
-#     Iy = im[:, 0, :]
-#     Iz = im[:, :, 0]
+    fig = plt.figure(figsize=(6, 6))
 
-#     vmin = np.min([Ix, Iy, Iz])
-#     vmax = np.max([Ix, Iy, Iz])
-#     norm = plt.Normalize(vmin=vmin, vmax=vmax)
+    def prep(im):
+        # given an 2D array in Pytorch, prepare to plot it
+        return im.detach().cpu().numpy().T
 
-#     colors = plt.cm.turbo(norm(im))
+    grid = AxesGrid(
+        fig,
+        111,
+        nrows_ncols=(2, 2),
+        axes_pad=0.4,
+        # share_all=True,
+        # label_mode="1",
+        cbar_location="right",
+        cbar_mode="edge",
+        cbar_pad="5%",
+        cbar_size="15%",
+        # direction="column"
+    )
 
-#     Cx = colors[0, :, :]
-#     Cy = colors[:, 0, :]
-#     Cz = colors[:, :, 0]
+    # plot fields on top
+    grid[0].imshow(
+        prep(y_true),
+        vmin=vmin,
+        vmax=vmax,
+        cmap="turbo",
+        origin="lower",
+    )
+    grid[0].set_title("True")
+    im2 = grid[1].imshow(
+        prep(y_pred),
+        vmin=vmin,
+        vmax=vmax,
+        cmap="turbo",
+        origin="lower",
+    )
+    grid[1].set_title("Predicted")
 
-#     # print(Ix, Iy, Iz)
+    grid[2].imshow(prep(micro), origin="lower")
+    grid[2].set_title("Micro")
 
-#     # print(im.shape, Ix.shape)
+    im4 = grid[3].imshow(prep((y_true - y_pred).abs()), cmap="turbo", origin="lower")
+    grid[3].set_title("Absolute Residual")
 
-#     xp, yp = Ix.shape
+    # add colorbars
+    grid.cbar_axes[0].colorbar(im2)
+    grid.cbar_axes[1].colorbar(im4)
 
-#     # print(xp, yp)
-#     x = np.arange(0, xp, 1 - 1e-13)
-#     y = np.arange(0, yp, 1 - 1e-13)
-#     Y, X = np.meshgrid(y, x)
+    fig.suptitle(f"{field_name}", y=0.95)
+    fig.tight_layout()
 
-#     # print(x)
+    os.makedirs(image_dir, exist_ok=True)
 
-#     fig = plt.figure(figsize=(12, 9))
-#     ax = fig.add_subplot(111, projection="3d")
-#     ax.dist = 6.2
-#     ax.view_init(elev=elev, azim=azim)
-#     ax.axis("off")
+    plt.savefig(f"{image_dir}/epoch_{epoch}_{field_name}.png", dpi=300)
 
-#     # print(X.shape, Y.shape, np.rot90(Ix, k=1).shape, (X - X + yp).shape)
-
-#     # print()
-
-#     ax.plot_surface(
-#         X,
-#         Y,
-#         X - X + yp,
-#         facecolors=np.rot90(Cx, k=1),
-#         rstride=1,
-#         cstride=1,
-#         antialiased=True,
-#         shade=False,
-#         vmin=vmin,
-#         vmax=vmax,
-#         cmap="turbo",
-#     )
-
-#     ax.plot_surface(
-#         X,
-#         X - X,
-#         Y,
-#         facecolors=np.rot90(Cy.transpose((1, 0, 2)), k=2),
-#         rstride=1,
-#         cstride=1,
-#         antialiased=True,
-#         shade=False,
-#         vmin=vmin,
-#         vmax=vmax,
-#         cmap="turbo",
-#     )
-
-#     ax.plot_surface(
-#         X - X + xp,
-#         X,
-#         Y,
-#         facecolors=np.rot90(Cz, k=-1),
-#         rstride=1,
-#         cstride=1,
-#         antialiased=True,
-#         shade=False,
-#         vmin=vmin,
-#         vmax=vmax,
-#         cmap="turbo",
-#     )
-#     fig.tight_layout()
-
-#     # make colorbar directly from normalization code
-#     m = plt.cm.ScalarMappable(cmap=plt.cm.turbo, norm=norm)
-#     m.set_array([])
-#     fig.colorbar(m, ax=ax)
-#     plt.savefig(filepath, transparent=True, dpi=300)
+    plt.close(fig)

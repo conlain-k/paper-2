@@ -120,8 +120,7 @@ class Localizer_FeedForward(LocalizerBase):
     def forward(self, m):
 
         x = self.net(m)
-        x = self.filter_result(x)
-        x = (x + self.scaled_average_strain) * self.constlaw.strain_scaling
+        x = self.filter_result(x) * self.constlaw.strain_scaling
 
         return x
 
@@ -220,7 +219,7 @@ class Localizer_DEQ(LocalizerBase):
 
         # print_activ_map(strain_k)
 
-        z_k = self.encode_micro_strain(strain_k.detach(), C_field, m)
+        z_k = self.encode_micro_strain(strain_k, C_field, m)
 
         if self.config.add_Green_iter:
             # get moulinec-suquet update
@@ -246,43 +245,6 @@ class Localizer_DEQ(LocalizerBase):
         assert not torch.isnan(strain_kp).any()
 
         return strain_kp
-
-    # def single_iter_fancy(self, m, eh_k):
-
-    #     # print("iter")
-    #     # print(m.shape)
-    #     # print(h_k.shape)
-    #     # print(torch.cuda.memory_summary())
-
-    #     # Split off current strain and encode into features
-    #     strain_k, h_k = eh_k[:, :6], eh_k[:, 6:]
-
-    #     # print("Init energy", (strain_k**2).mean().sqrt(), (h_k**2).mean().sqrt())
-
-    #     # don't differentiate through this projection as input to model (only during output)
-    #     strain_k = strain_k.detach()
-
-    #     # Now get micro features
-    #     z_k = self.encode_micro_strain(strain_k, m)
-
-    #     # Combine information
-
-    #     FNO_input = self.lift_h(h_k) + self.lift_z(z_k)
-
-    #     # now apply model
-    #     FNO_output = self.forward_net(FNO_input)
-
-    #     h_kp = self.proj_h(FNO_output)
-
-    #     strain_kp = self.proj_eps(FNO_output) * self.constlaw.strain_scaling
-
-    #     strain_kp = self.filter_result(strain_kp)
-
-    #     # print("Final energy", (strain_kp**2).mean().sqrt(), (h_kp**2).mean().sqrt())
-
-    #     eh_kp = torch.concatenate([strain_kp, h_kp], dim=1)
-
-    #     return eh_kp
 
     def forward(self, m):
 

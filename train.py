@@ -9,16 +9,7 @@ from helpers import *
 
 from constlaw import *
 
-import matplotlib.pyplot as plt
-from mpl_toolkits.axes_grid1 import AxesGrid
-
 FIELD_IND = 0
-
-
-def sync():
-    # force cuda sync if cuda is available, otherwise skip
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
 
 
 def PRMS_loss(y_true, y_pred, scale=None):
@@ -62,12 +53,14 @@ def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst, resid):
     print(f"Saving fig for epoch {epoch}, min ind is {ind_worst}")
     assert ind_worst is not None
 
+    C_field = model.constlaw.compute_C_field(micro)
+
     # recompute quantities
     stress_pred, stress_polar_pred, energy_pred = compute_quants(
-        model, strain_pred, micro
+        model, strain_pred, C_field
     )
     stress_true, stress_polar_true, energy_true = compute_quants(
-        model, strain_true, micro
+        model, strain_true, C_field
     )
 
     err_energy = compute_strain_energy(
@@ -163,85 +156,7 @@ def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst, resid):
     )
 
 
-def plot_pred(epoch, micro, y_true, y_pred, field_name, image_dir):
-    vmin_t, vmax_t = y_true.min(), y_true.max()
-    vmin_p, vmax_p = y_pred.min(), y_pred.max()
-    vmin = min(vmin_t, vmin_p)
-    vmax = max(vmax_t, vmax_p)
-
-    fig = plt.figure(figsize=(6, 6))
-
-    def prep(im):
-        # given an 2D array in Pytorch, prepare to plot it
-        return im.detach().cpu().numpy().T
-
-    grid = AxesGrid(
-        fig,
-        111,
-        nrows_ncols=(2, 2),
-        axes_pad=0.4,
-        # share_all=True,
-        # label_mode="1",
-        cbar_location="right",
-        cbar_mode="edge",
-        cbar_pad="5%",
-        cbar_size="15%",
-        # direction="column"
-    )
-
-    # plot fields on top
-    grid[0].imshow(
-        prep(y_true),
-        vmin=vmin,
-        vmax=vmax,
-        cmap="turbo",
-        origin="lower",
-    )
-    grid[0].set_title("True")
-    im2 = grid[1].imshow(
-        prep(y_pred),
-        vmin=vmin,
-        vmax=vmax,
-        cmap="turbo",
-        origin="lower",
-    )
-    grid[1].set_title("Predicted")
-
-    grid[2].imshow(prep(micro), origin="lower")
-    grid[2].set_title("Micro")
-
-    im4 = grid[3].imshow(prep((y_true - y_pred).abs()), cmap="turbo", origin="lower")
-    grid[3].set_title("Absolute Residual")
-
-    # add colorbars
-    grid.cbar_axes[0].colorbar(im2)
-    grid.cbar_axes[1].colorbar(im4)
-
-    # bbox_ax_top = ax[0, 1].get_position()
-    # bbox_ax_bottom = ax[1, 1].get_position()
-
-    # cbar_im1a_ax = fig.add_axes(
-    #     [1.01, bbox_ax_top.y0, 0.02, bbox_ax_top.y1 - bbox_ax_top.y0]
-    # )
-    # cbar_im1a = plt.colorbar(im2, cax=cbar_im1a_ax)
-
-    # cbar_im2a_ax = fig.add_axes(
-    #     [1.01, bbox_ax_bottom.y0, 0.02, bbox_ax_bottom.y1 - bbox_ax_bottom.y0]
-    # )
-    # cbar_im1a = plt.colorbar(im4, cax=cbar_im2a_ax)
-
-    fig.suptitle(f"{field_name}", y=0.95)
-    fig.tight_layout()
-
-    os.makedirs(image_dir, exist_ok=True)
-
-    plt.savefig(f"{image_dir}/epoch_{epoch}_{field_name}.png", dpi=300)
-
-    plt.close(fig)
-
-
-def compute_quants(model, strain, micros):
-    C_field = model.constlaw.compute_C_field(micros)
+def compute_quants(model, strain, C_field):
     stress = model.constlaw(strain, C_field)
     stress_polar = model.constlaw.stress_pol(strain, C_field)
     energy = compute_strain_energy(strain, stress)
@@ -249,10 +164,10 @@ def compute_quants(model, strain, micros):
     return stress, stress_polar, energy
 
 
-def compute_losses(model, quants_pred, quants_true, resid):
+def compute_losses(model, strain_pred, strain_true, C_field, resid):
 
-    strain_pred, stress_pred, energy_pred = quants_pred
-    strain_true, stress_true, energy_true = quants_true
+    stress_pred, _, energy_pred = compute_quants(model, strain_pred, C_field)
+    stress_true, _, energy_true = compute_quants(model, strain_true, C_field)
 
     strain_loss = PRMS_loss(
         strain_true,
@@ -281,8 +196,8 @@ def compute_losses(model, quants_pred, quants_true, resid):
         100 * (err_energy**2).mean().sqrt() / model.constlaw.energy_scaling
     )
 
-    resid_loss = 0
-    compat_loss = 0
+    resid_loss = torch.as_tensor(0.0)
+    compat_loss = torch.as_tensor(0.0)
 
     if model.config.return_resid:
         resid_loss = 100 * (resid**2).mean().sqrt() / model.constlaw.strain_scaling
@@ -290,7 +205,8 @@ def compute_losses(model, quants_pred, quants_true, resid):
     if model.config.compute_stressdiv:
 
         err_compat, _ = model.greens_op.compute_residuals(strain_pred, stress_pred)
-        compat_loss = 100 * batched_vec_avg_norm(err_compat).mean()
+        # compute RMSE, averaged across channels/batch, converted to percent
+        compat_loss = 100 * (err_compat**2).mean(dim=(-3, -2, -1)).sqrt().mean()
 
     losses = LossSet(
         model.config,
@@ -317,6 +233,7 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
     L1_strain_err = 0
     L1_VM_stress_err = 0
 
+    diff_worst = 0
     micro_worst = None
     strain_true_worst = None
     strain_pred_worst = None
@@ -327,19 +244,25 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
     mean_homog = 0
 
     running_time_cost = 0
-    for ind, (micros, strain_true, _) in enumerate(eval_loader):
+    for ind, (micros, strain_true, stress_true) in enumerate(eval_loader):
 
+        # force synchronization for timing
         sync()
         if data_mode == DataMode.TEST:
             print(f"Testing batch {ind} of {len(eval_loader)}")
-        t0 = time.time()
-        micros = micros.to(model.config.device)
-        # only predict first component
-        strain_true = strain_true.to(model.config.device)
 
+        t0 = time.time()
+
+        # include data migration in timing
+        micros = micros.to(model.config.device)
+        strain_true = strain_true.to(model.config.device)
+        stress_true = stress_true.to(model.config.device)
+
+        # now evaluate model
         with torch.inference_mode():
             output = eval_model(micros)
 
+        # how long did that pass take?
         sync()
         t1 = time.time()
 
@@ -360,9 +283,6 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
 
         assert not torch.isnan(strain_pred).any()
 
-        stress_pred, _, energy_pred = compute_quants(model, strain_pred, micros)
-        stress_true, _, energy_true = compute_quants(model, strain_true, micros)
-
         # find worst e_xx strain pred
         ind_max = (
             torch.argmax((strain_true - strain_pred)[:, FIELD_IND].abs()).detach().cpu()
@@ -374,7 +294,7 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
         diff = (strain_true - strain_pred)[:, FIELD_IND][ind_max].abs()
 
         # just show last batch
-        if True:  # diff > diff_worst:
+        if diff > diff_worst:
             # location of worst in batch
             b_ind = ind_max[0]
             micro_worst = micros[b_ind : b_ind + 1].detach()
@@ -382,16 +302,22 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
             strain_pred_worst = strain_pred[b_ind : b_ind + 1].detach()
             resid_worst = resid[b_ind : b_ind + 1].detach()
             ind_worst = ind_max[1:]
+            diff_worst = diff
+
+        C_field = model.constlaw.compute_C_field(micros)
 
         losses_e, _ = compute_losses(
             model,
-            (strain_pred, stress_pred, energy_pred),
-            (strain_true, stress_true, energy_true),
+            strain_pred,
+            strain_true,
+            C_field,
             resid,
         )
 
-        C11_true = est_homog(strain_true, stress_true, (0, 0))
-        C11_pred = est_homog(strain_pred, stress_pred, (0, 0))
+        C11_true = est_homog(strain_true, micros, (0, 0))
+
+        stress_pred = model.constlaw(strain_pred, C_field)
+        C11_pred = est_homog(strain_pred, micros, (0, 0))
 
         homog_err += (C11_true - C11_pred).abs().sum()
 
@@ -549,18 +475,17 @@ def train_model(model, config, train_loader, valid_loader):
                 strain_pred = output
                 resid = 0 * strain_pred
 
-            stress_pred, stress_polar_pred, energy_pred = compute_quants(
-                model, strain_pred, micros
-            )
-            stress_true, stress_polar_true, energy_true = compute_quants(
-                model, strain_true, micros
-            )
+            C_field = model.constlaw.compute_C_field(micros)
+
+            stress_pred = model.constlaw(strain_pred, C_field)
+            stress_true = model.constlaw(strain_true, C_field)
 
             # now compute losses
             losses_e, total_loss = compute_losses(
                 model,
-                (strain_pred, stress_pred, energy_pred),
-                (strain_true, stress_true, energy_true),
+                strain_pred,
+                strain_true,
+                C_field,
                 resid,
             )
 

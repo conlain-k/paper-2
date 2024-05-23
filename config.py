@@ -9,7 +9,7 @@ DELIM = "-" * 40
 lam_strain = 1
 lam_stress = 1
 lam_energy = 1
-lam_err_energy = 1
+lam_err_energy = 0
 lam_compat = 0.1
 lam_compat = 0
 
@@ -90,10 +90,11 @@ class Config:
     use_stress: bool = True
     use_stress_polarization: bool = False
     use_energy: bool = True
+    use_FFT_resid: bool = False
 
     # whether to output strain or displacement
     # output_displacement: bool = False
-    compute_stressdiv: bool = True
+    compute_stressdiv: bool = False
 
     grad_clip_mag: float = 10
     use_skip_update: bool = False
@@ -153,7 +154,6 @@ class LossSet:
     err_energy_loss: float = 0
     resid_loss: float = 0
     compat_loss: float = 0
-    is_prms:bool = False
 
     def __add__(self, other):
         # total_loss = self.total_loss + other.total_loss
@@ -222,9 +222,6 @@ class LossSet:
             self.resid_loss.detach(),
             self.compat_loss.detach(),
         )
-    
-    def to_PRMS(self):
-        # convert to percent mean-square error
 
     def to_dict(self):
         # get all losses as dictionary
