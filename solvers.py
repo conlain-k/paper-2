@@ -71,10 +71,12 @@ class LocalizerBase(torch.nn.Module):
         # print((self.eps_bar @ self.constlaw.C_ref @ self.eps_bar).shape)
         self.strain_scaling = frob(self.eps_bar)
 
-        stiff_scaling = frob(self.constlaw.C_ref)
+        self.stiffness_scaling = frob(self.constlaw.C_ref)
+
+        self.constlaw.C_ref /= self.stiffness_scaling
 
         # stress corresponding to a scaled strain
-        self.stress_scaling = stiff_scaling * self.strain_scaling
+        self.stress_scaling = self.stiffness_scaling * self.strain_scaling
         self.energy_scaling = self.stress_scaling * self.strain_scaling
 
         # print(self.strain_scaling, self.stress_scaling, self.energy_scaling)
@@ -102,7 +104,7 @@ class LocalizerBase(torch.nn.Module):
             x = self.enforce_zero_mean(x)
 
         # either way, add mean strain as correction
-        x += self.eps_bar.reshape(1, 6, 1, 1, 1)
+        x += self.eps_bar.reshape(1, 6, 1, 1, 1) / self.strain_scaling
 
         return x
 
@@ -157,7 +159,7 @@ class Localizer_DEQ(LocalizerBase):
     def encode_micro_strain(self, strain, C_field, m):
         # encode microstructure and strain field
         # always use strain as input
-        feat = [strain / self.strain_scaling]
+        feat = [strain]
 
         # precompute stress for convenience
         stress = self.constlaw(strain, C_field)
@@ -168,19 +170,19 @@ class Localizer_DEQ(LocalizerBase):
 
         # build up features
         if self.config.use_stress:
-            feat.append(stress / self.stress_scaling)
+            feat.append(stress)
 
         if self.config.use_stress_polarization:
             stress_polar = self.constlaw.stress_pol(strain, C_field)
-            feat.append(stress_polar / self.stress_scaling)
+            feat.append(stress_polar)
 
         if self.config.use_energy:
             strain_energy = compute_strain_energy(strain, stress)
-            feat.append(strain_energy / self.energy_scaling)
+            feat.append(strain_energy)
 
         # if self.config.use_bc_strain:
         #     eps_avg = self.compute_init_strain(m, None)
-        #     feat.append(eps_avg / self.strain_scaling)
+        #     feat.append(eps_avg )
 
         # collect features into a vector
         nn_features = torch.concatenate(feat, dim=1)
@@ -218,7 +220,7 @@ class Localizer_DEQ(LocalizerBase):
             z_k = torch.concatenate([z_k, z_ms], dim=1)
 
         # predict new strain perturbation
-        strain_kp = self.forward_net(z_k) * self.strain_scaling
+        strain_kp = self.forward_net(z_k)
 
         if self.config.use_skip_update:
             strain_kp += strain_k
@@ -268,7 +270,7 @@ class Localizer_DEQ(LocalizerBase):
         # build up shape of latent dim based on micro
         h_shape = list(m.shape)
 
-        C_field = self.constlaw.compute_C_field(m)
+        C_field = self.constlaw.compute_C_field(m) / self.stiffness_scaling
 
         # print("HH", m.shape, C_field.shape)
         # print(C_field[0, 0, 0, :, :, 0])
@@ -277,7 +279,7 @@ class Localizer_DEQ(LocalizerBase):
 
         # just iterate over strain dim directly
         F = lambda h: self.single_iter_simple(h, C_field, m)
-        h0 = self.compute_init_strain(m, None)  # * 0
+        h0 = self.compute_init_strain(m, None) / self.strain_scaling  # * 0
 
         # print("init", h0.shape)
         # h_shape[1] = 6 # done automatically
@@ -305,8 +307,11 @@ class Localizer_DEQ(LocalizerBase):
         else:
             strain_pred = hstar
 
+        strain_pred = strain_pred * self.strain_scaling
+
         if self.config.return_resid:
             resid = F(hstar.detach()) - hstar
+            resid = resid * self.strain_scaling
             return strain_pred, resid
         else:
             return strain_pred

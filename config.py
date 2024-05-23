@@ -22,7 +22,7 @@ lam_energy = lam_energy / lam_sum
 lam_stressdiv = lam_stressdiv / lam_sum
 
 # residual error is usually small anyways, and we want our DEQ gradients to be accurate
-lam_resid = 100
+lam_resid = 1
 
 
 @dataclass
@@ -97,7 +97,7 @@ class Config:
     # output_displacement: bool = False
     compute_stressdiv: bool = False
 
-    grad_clip_mag: float = 100
+    grad_clip_mag: float = 10
     use_skip_update: bool = False
     enforce_mean: bool = True
 
