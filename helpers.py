@@ -30,6 +30,10 @@ SCRATCH_DIR = "/storage/home/hcoda1/3/ckelly84/scratch/"
 CHECKPOINT_DIR = "checkpoints"
 
 
+def mean_L1_error(true, pred):
+    return (pred - true).abs().mean(dim=(-3, -2, -1))
+
+
 def sync():
     # force cuda sync if cuda is available, otherwise skip
     if torch.cuda.is_available():
@@ -52,7 +56,7 @@ def write_dataset_to_h5(dataset, name, h5_file):
 
     # assumes batched, so that second channel is features
     chunk_size = (1,) + dataset[0].shape
-    print("chunk size is", chunk_size)
+    # print("chunk size is", chunk_size)
 
     # now make the actual datasets
     h5_file.create_dataset(

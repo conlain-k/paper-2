@@ -144,13 +144,12 @@ class FNO_Block(torch.nn.Module):
 
         x1 = self.conv(x)
 
-        if self.normalize:
-            x1 = self.norm_1(x1)
-        # print_activ_map(x1)
-        if self.use_MLP:
-            x1 = self.mlp_layer(x1)
-            # print_activ_map(x1)
-
+        # if self.normalize:
+        #     x1 = self.norm_1(x1)
+        # # print_activ_map(x1)
+        # if self.use_MLP:
+        #     x1 = self.mlp_layer(x1)
+        #     # print_activ_map(x1)
         x2 = self.filt(x)
         # print_activ_map(x2)
 

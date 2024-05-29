@@ -1,10 +1,4 @@
-from constlaw import (
-    StrainToStress_2phase,
-    StrainToStress_crystal,
-    compute_strain_from_displacment,
-    compute_strain_energy,
-    central_diff_3d,
-)
+from constlaw import *
 from greens_op import GreensOp
 from fno import FNO
 from layers import SimpleLayerNet, TinyVNet, ProjectionBlock
@@ -40,15 +34,12 @@ def make_localizer(config):
 
 
 class LocalizerBase(torch.nn.Module):
-    # base class for localization mx_powerodels
+    # base class for localization models
     def __init__(self, config):
         super().__init__()
 
         self.register_buffer("eps_bar", torch.zeros(6))
         self.constlaw = None
-
-        # if config.use_bc_strain:
-        #     input_channels += 6
 
         # default to output strain (6 channels)
         self.output_channels = 6
@@ -66,7 +57,7 @@ class LocalizerBase(torch.nn.Module):
 
         # take frob norm of a given quantity
 
-        self.constlaw.set_scalings(self.eps_bar)
+        self.constlaw.compute_scalings(self.eps_bar)
         self.register_buffer(
             "scaled_average_strain",
             self.eps_bar.reshape(1, 6, 1, 1, 1) / self.constlaw.strain_scaling,
@@ -75,22 +66,11 @@ class LocalizerBase(torch.nn.Module):
     def set_constlaw_crystal(self, C11, C12, C44):
         self.constlaw = StrainToStress_crystal(C11, C12, C44)
         # make sure scalings are set correctly
-        self.constlaw.set_scalings(self.eps_bar)
+        self.constlaw.compute_scalings(self.eps_bar)
 
     def enforce_zero_mean(self, x):
-
-        # compute mean in double
-        # x = x.double()
         # remove the average value from a field (for each instance, channel)
-        xmean = x.mean(dim=(-3, -2, -1), keepdim=True)
-
-        # now downcast to float
-        # xmean = xmean.float()
-        xp = x - xmean
-        # print("mean", xmean[0].mean(dim=(-3, -2, -1)))
-        # print("X", x[0].mean(dim=(-3, -2, -1)))
-        # print("xp", xp[0].mean(dim=(-3, -2, -1)))
-        return xp
+        return x - x.mean(dim=(-3, -2, -1), keepdim=True)
 
     # def green_iter(self, m, strain):
     #     eps = self.greens_op(strain, m)
@@ -114,10 +94,19 @@ class Localizer_FeedForward(LocalizerBase):
     # base class for localization models
     def __init__(self, config):
         super().__init__(config)
+        if self.config.use_C_flat:
+            input_channels = 21
+        else:
+            input_channels = 2
 
-        self.net = make_model(config, input_channels=2, output_channels=6)
+        self.net = make_model(config, input_channels=input_channels, output_channels=6)
 
     def forward(self, m):
+
+        if self.config.use_C_flat:
+            C_field = self.constlaw.compute_C_field(m) / self.constlaw.stiffness_scaling
+            # use flattened stiffness as micro
+            m = flatten_stiffness(C_field)
 
         x = self.net(m)
         x = self.filter_result(x) * self.constlaw.strain_scaling
@@ -137,6 +126,8 @@ class Localizer_DEQ(LocalizerBase):
         # add channels as appropriate
         if config.use_micro:
             self.num_strain_feats += 2
+        if config.use_C_flat:
+            self.num_strain_feats += 21
         if config.use_stress:
             self.num_strain_feats += 6
         if config.use_stress_polarization:
@@ -166,6 +157,10 @@ class Localizer_DEQ(LocalizerBase):
             # append all phases for convenience
             feat.append(m)
 
+        if self.config.use_C_flat:
+            # append all phases for convenience
+            feat.append(flatten_stiffness(C_field))
+
         # build up features
         if self.config.use_stress:
             feat.append(stress)
@@ -187,10 +182,6 @@ class Localizer_DEQ(LocalizerBase):
         # collect features into a vector
         nn_features = torch.concatenate(feat, dim=1)
 
-        # print(
-        #     f"\t\tMean features: {nn_features.mean(dim=(-3, -2, -1, 0))}, std features: {nn_features.std(dim=(-3, -2, -1, 0))}",
-        # )
-
         # now return dense feat vec
         return nn_features
 
@@ -201,7 +192,8 @@ class Localizer_DEQ(LocalizerBase):
             return init_guess
         eps_shape = list(micro.shape)
         # eps should be b * 6 * xyz (since 6 indep strain components)
-        Nx = self.config.num_voxels
+        # TODO get # voxels in a more stable fashion
+        Nx = eps_shape[-2]
 
         # broadcast avg strain to all locations
         init_strain = (
@@ -214,18 +206,15 @@ class Localizer_DEQ(LocalizerBase):
         """
         Given a stiffness tensor C corresponding to micro m, update the current strain field using the neural net
         """
+        z_k = self.encode_micro_strain(strain_k, C_field, m)
 
-        # print("\nStarting iter")
-
-        # print_activ_map(strain_k)
-
-        z_k = self.encode_micro_strain(strain_k.detach(), C_field, m)
+        # print_activ_map(z_k.detach())
 
         if self.config.add_Green_iter:
             # get moulinec-suquet update
             # NOTE: block gradients flowing through this step (e.g. don't differentiate through MS step)
             # hopefully this stabilizes training
-            eps_ms = self.greens_op.forward(strain_k.detach(), C_field)
+            eps_ms = self.greens_op.forward(strain_k, C_field)
             z_ms = self.encode_micro_strain(eps_ms, C_field, m)
 
             # stack on M-S features after current features
@@ -237,18 +226,13 @@ class Localizer_DEQ(LocalizerBase):
         if self.config.use_skip_update:
             strain_kp += strain_k
 
-        # print_activ_map(strain_kp)
-
         strain_kp = self.filter_result(strain_kp)
-        # print_activ_map(strain_kp)
 
         assert not torch.isnan(strain_kp).any()
 
         return strain_kp
 
     def forward(self, m):
-
-        # print(torch.cuda.memory_summary())
 
         C_field = self.constlaw.compute_C_field(m) / self.constlaw.stiffness_scaling
 
@@ -270,7 +254,6 @@ class Localizer_DEQ(LocalizerBase):
 
         # solve FP over h system
         sol, _ = self.deq(F, h0, solver_kwargs=iter_arg)
-        # print(info)
         hstar = sol[-1]
 
         if self.config.use_fancy_iter:
@@ -279,7 +262,12 @@ class Localizer_DEQ(LocalizerBase):
         else:
             strain_pred = hstar * self.constlaw.strain_scaling
 
-        if self.config.return_resid:
+        if self.config.return_deq_trace:
+            # just return raw deq trace without postprocessing
+            return [s * self.constlaw.strain_scaling for s in sol]
+
+        # return model and residual
+        elif self.config.return_resid:
             resid = (F(hstar) - hstar) * self.constlaw.strain_scaling
             return strain_pred, resid
 

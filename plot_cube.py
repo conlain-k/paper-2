@@ -14,10 +14,12 @@ def plot_cube(
     title=None,
     add_cb=True,
     cmap="turbo",
+    vmin=None,
+    vmax=None,
     edges_kw=dict(color="0.3", linewidth=1, linestyle="--", zorder=10),
 ):
-    
-    im = torch.fft.fftshift(im)
+
+    # im = torch.fft.fftshift(im)
 
     if isinstance(im, torch.Tensor):
         im = im.detach().numpy()
@@ -26,8 +28,9 @@ def plot_cube(
 
     # im = np.moveaxis(im, 0, -1)
 
-    vmin = im.min()
-    vmax = im.max()
+    # allow overrides of min and max
+    vmin = vmin or im.min()
+    vmax = vmax or im.max()
 
     norm = plt.Normalize(vmin=vmin, vmax=vmax)
     cmap = plt.get_cmap(cmap)

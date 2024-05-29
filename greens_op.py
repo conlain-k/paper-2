@@ -25,8 +25,8 @@ class GreensOp(torch.nn.Module):
         freqs_base = self.get_freqs(N, willot=False)
         freqs_willot = self.get_freqs(N, willot=True)
 
-        print("freqs_base", freqs_base[0, 1, 0])
-        print("freqs_willot", freqs_willot[0, 1, 0])
+        # print("freqs_base", freqs_base[0, 1, 0])
+        # print("freqs_willot", freqs_willot[0, 1, 0])
 
         # torch.testing.assert_close(
         #     self._compute_coeffs(self.N), self._compute_coeffs_alt(self.N)
@@ -58,15 +58,15 @@ class GreensOp(torch.nn.Module):
         # integer freq terms, assuming unit domain length
         q = torch.fft.fftfreq(N, d=h)
 
-        print("q is", q)
+        # print("q is", q)
         # get it as 3 terms
         q_v = torch.meshgrid(q, q, q, indexing="ij")
         # stack into a frequency vector
         q_vec = torch.stack(q_v, dim=0)
-        print("shape", q.shape, q_vec.shape)
+        # print("shape", q.shape, q_vec.shape)
 
         if willot:
-            print("Using willot terms!")
+            # print("Using willot terms!")
 
             # compute phi term from Janus implementation
             # https://github.com/sbrisard/janus/blob/a6196a025fee6bf0f3eb5e636a6b2f895ca6fbc9/janus/green.pyx#L999
@@ -132,22 +132,25 @@ class GreensOp(torch.nn.Module):
             filter = (1 + torch.cos(PI * normq)) / 2
             G = G * filter.reshape(1, 1, 1, 1, N, N, N)
 
-        # Make sure zero-freq terms are actually zero
+        # Make sure zero-freq terms are actually zero for each component
         G[..., 0, 0, 0] = 0
         return G
 
-    def forward(self, eps_k, C_field, use_polar=False):
+    def forward(self, eps_k, C_field, use_polar=True):
         # given current strain, compute a new one
         if use_polar:
-            # compute stress polarization
-            tau = self.constlaw.stress_pol(eps_k, C_field)
-            # apply but keep mean
-            eps_kp = -self.apply_gamma(tau)
-            eps_kp = (
-                eps_kp
-                - eps_kp.mean(dim=(-3, -2, -1), keepdim=True)
-                + eps_k.mean(dim=(-3, -2, -1), keepdim=True)
+
+            tau = self.constlaw.stress_pol(
+                eps_k,
+                C_field,
             )
+
+            # print(C_field.mean(dim=(-3, -2, -1)))
+            # print(self.constlaw.C_ref_unscaled)
+            # print(self.constlaw.C_ref)
+            E_bar = eps_k.mean(dim=(-3, -2, -1), keepdim=True)
+            eps_kp = E_bar - self.apply_gamma(tau)
+
         else:
             sigma = self.constlaw.forward(eps_k, C_field)
             eps_pert = self.apply_gamma(sigma)
@@ -180,6 +183,8 @@ class GreensOp(torch.nn.Module):
         # get C0 : e term for field e
         C0e = torch.einsum("rc, bcxyz -> brxyz", self.constlaw.C_ref, field)
 
+        # print(field.shape, self.constlaw.C_ref.shape)
+
         return self.apply_gamma(C0e)
 
     def project_S(self, field):
@@ -191,8 +196,14 @@ class GreensOp(torch.nn.Module):
         resid_equi = torch.einsum("rc, bcijk -> brijk", self.constlaw.S_ref, stress)
         resid_equi = self.project_D(resid_equi)
 
-        # normalize by avg strain (assumes average matches true avg and is nonzero)
-        mean_strain = batched_vec_avg_norm(strain)
+        # normali   ze by avg strain (assumes average matches true avg and is nonzero)
+        mean_strain = strain.mean(dim=(-3, -2, -1), keepdim=True)
+        # take L2 norm of mean strain
+        mean_strain_scale = (mean_strain**2).sum(dim=1, keepdim=True).sqrt()
+
+        # print(mean_strain.shape, mean_strain_scale.shape, strain.shape)
+
+        # print(mean_strain.shape)
 
         # print(mean_strain)
 
@@ -200,8 +211,8 @@ class GreensOp(torch.nn.Module):
         resid_compat = self.project_S(strain - mean_strain)
 
         # avoid ever dividing by zero, but broadcast along components/batch
-        if mean_strain.all() > 0:
-            resid_equi /= mean_strain
-            resid_compat /= mean_strain
+        if mean_strain_scale.all() > 0:
+            resid_equi /= mean_strain_scale
+            resid_compat /= mean_strain_scale
 
         return resid_equi, resid_compat

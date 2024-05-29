@@ -14,7 +14,6 @@ class StrainToStress_base(torch.nn.Module):
         super().__init__()
 
         # store reference stiffness matrix (need to set values in child class)
-        self.register_buffer("C_ref_unscaled", torch.zeros((6, 6)))
         self.register_buffer("C_ref", torch.zeros((6, 6)))
         self.register_buffer("S_ref", torch.zeros((6, 6)))
 
@@ -23,7 +22,7 @@ class StrainToStress_base(torch.nn.Module):
         self.stress_scaling = None
         self.energy_scaling = None
 
-    def set_scalings(self, eps_bar):
+    def compute_scalings(self, eps_bar):
         frob = lambda x: (x**2).sum().sqrt()
         self.stiffness_scaling = frob(self.C_ref)
         self.strain_scaling = frob(eps_bar)
@@ -31,9 +30,6 @@ class StrainToStress_base(torch.nn.Module):
         # compute other scalings downstream of this one
         self.stress_scaling = self.stiffness_scaling * self.strain_scaling
         self.energy_scaling = self.stress_scaling * self.strain_scaling
-
-        self.C_ref = self.C_ref_unscaled / self.stiffness_scaling
-        self.S_ref = torch.linalg.inv(self.C_ref)
 
     def compute_C_matrix(self, lamb, mu):
         new_mat = torch.zeros((6, 6), dtype=torch.float32, requires_grad=False)
@@ -51,8 +47,14 @@ class StrainToStress_base(torch.nn.Module):
         return new_mat
 
     def stress_pol(self, strain, C_field, scaled=False):
-        # is this stiffness field scaled or not?
-        C_ref = self.C_ref if scaled else self.C_ref_unscaled
+        """
+        Compute stress polarization (pass scaled=True if strains and C are scaled)
+        """
+
+        C_ref = self.C_ref
+        if scaled:
+            C_ref = C_ref / self.stiffness_scaling
+
         C_pert = C_field - C_ref.reshape(1, 6, 6, 1, 1, 1)
         # compute stress polarization
         stress_polarization = torch.einsum("brcxyz, bcxyz -> brxyz", C_pert, strain)
@@ -62,27 +64,27 @@ class StrainToStress_base(torch.nn.Module):
     def forward(self, strain, C_field):
         """Apply a given constitutive law over a batch of n-phase microstructures"""
 
-        # print("strain", strain.shape, "C", C_field.shape)
         stress = torch.einsum("brcxyz, bcxyz->brxyz", C_field, strain)
 
         return stress
 
-    def C_norm(self, field):
+    def C0_norm(self, field, average=False, scaled=False):
         """
-        Given a batch of 3D symmetric tensor fields (e.g. stress, strain) compute the C0-norm
+        Given a batch of 3D symmetric tensor fields (e.g. strain) compute the C0-norm
         Used to check convergence / as an error metric
         Assumes field has indices b, i, x, y, z and size (batch_size, 6, N, N, N) for N voxels in each direction
         """
+        scale = 1.0
+        if scaled:
+            scale = 1.0 / self.stiffness_scaling
+        return weighted_norm(field, self.C_ref * scale, average)
 
-        return (field**2).sum(dim=1).mean((-3, -2, -1)).sqrt()
-        # get number voxels (is there an easier way?)
-        S = torch.prod(torch.as_tensor(field.shape[-3:]))
-        # contract components *and* spatial dimensions
-        res = torch.einsum("brxyz, rc, bcxyz -> b", field, self.C_ref, field)
-        # divide out number of voxels (sum -> average)
-        res = res / S
-
-        return res
+    def S0_norm(self, field, average=False, scaled=False):
+        # like the C0-norm, but for stress-like quantities
+        scale = 1.0
+        if scaled:
+            scale = self.stiffness_scaling
+        return weighted_norm(field, self.S_ref * scale, average)
 
 
 class StrainToStress_2phase(StrainToStress_base):
@@ -112,10 +114,7 @@ class StrainToStress_2phase(StrainToStress_base):
 
         self.lamb_0 = self.lamb_vals.mean()
         self.mu_0 = self.mu_vals.mean()
-        self.C_ref_unscaled = isotropic_mandel66(self.lamb_0, self.mu_0)
-
-        # initially no scalings
-        self.C_ref = self.C_ref_unscaled
+        self.C_ref = isotropic_mandel66(self.lamb_0, self.mu_0)
         self.S_ref = torch.linalg.inv(self.C_ref)
 
     def compute_C_field(self, micros):
@@ -128,16 +127,27 @@ class StrainToStress_crystal(StrainToStress_base):
         # computes stresses from strains and stiffness tensor (cubic crystal)
         super().__init__()
 
+        # store cubic mats
         C_unrot = cubic_mandel66(C11, C12, C44)
         C_unrot_3333 = C_mandel_to_mat_3x3x3x3(C_unrot)
         # use aniso reference for now (NOT GOOD)
         self.register_buffer("C_unrot", C_unrot)
         self.register_buffer("C_unrot_3333", C_unrot_3333)
 
-        self.C_ref = cubic_mandel66(C11, C12, C44)
+        # project onto "nearest" isotropic tensor
+        # uses Norris' formulas https://msp.org/jomms/2006/1-2/jomms-v1-n2-p02-s.pdf
+
+        k = (C11 + 2 * C12) / 3.0
+        # cache these for the Green's op as well
+        self.mu_0 = (C44**3 * (C11 - C12) ** 2) ** (1.0 / 5.0)
+        self.lamb_0 = k - 2.0 * self.mu_0 / 3.0
+
+        # use (nearest) isotropic reference
+        self.C_ref = isotropic_mandel66(self.lamb_0, self.mu_0)
         self.S_ref = torch.linalg.inv(self.C_ref)
 
     def compute_local_stiffness(self, euler_ang, stiff_mat_base):
+        # assumes euler ange have shape (batch, 3, x, y, z)
 
         orig_shape = euler_ang.shape
 
@@ -162,12 +172,10 @@ class StrainToStress_crystal(StrainToStress_base):
         )
         # flatten euler angles first
 
+        # print(C_field.shape)
         return C_field
 
     def compute_C_field(self, micros):
-        # compute stiffness tensor field from 2-phase microstructure
-        # print(self.C_unrot_3333)
-        # print(self.C_unrot)
         return self.compute_local_stiffness(micros, self.C_unrot_3333)
 
 
@@ -332,3 +340,32 @@ def compute_strain_energy(strain, stress):
     U = torch.einsum("brxyz, brxyz -> bxyz", strain, stress)
     U = U.unsqueeze(1)
     return U
+
+
+def flatten_stiffness(C_field):
+    # keep batch and space dimensions
+    new_shape = (C_field.shape[0], 21) + C_field.shape[-3:]
+    # extract 21 unique coeffs
+    C_vec = C_field.new_zeros(new_shape)
+    # first 6 coeffs take top row
+    C_vec[:, 0:6] = C_field[:, 0, :]
+    # second row, but skip first
+    C_vec[:, 6:11] = C_field[:, 1, 1:]
+    # third row, skip first 2
+    C_vec[:, 11:15] = C_field[:, 2, 2:]
+    # and so on
+    C_vec[:, 15:18] = C_field[:, 3, 3:]
+    C_vec[:, 18:20] = C_field[:, 4, 4:]
+    C_vec[:, 20:21] = C_field[:, 5, 5:]
+
+    return C_vec
+
+
+def weighted_norm(field, weight_mat, average):
+    # contract components (but not space)
+    res = torch.einsum("brxyz, rc, bcxyz -> bxyz", field, weight_mat, field)
+    # average out over voxels if desired
+    if average:
+        res = res.mean(dim=(-3, -2, -1))
+
+    return res
