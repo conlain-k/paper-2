@@ -6,7 +6,7 @@ import os
 DELIM = "-" * 40
 
 # coefficients for balancing loss functions
-lam_strain = 2
+lam_strain = 1
 lam_stress = 0
 lam_energy = 0
 
@@ -20,7 +20,7 @@ lam_stress = lam_stress / lam_sum
 lam_energy = lam_energy / lam_sum
 
 # residual error is usually small anyways, and we want our DEQ gradients to be accurate
-lam_resid = 1000
+lam_resid = 100
 
 
 @dataclass
@@ -47,7 +47,7 @@ class Config:
 
     # Should we use a fixed maximum # iters, or randomize over training
     deq_randomize_max: bool = True
-    deq_min_iter: int = 3
+    deq_min_iter: int = 5
 
     deq_args: dict = field(
         default_factory=lambda: {

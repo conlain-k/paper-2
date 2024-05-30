@@ -18,15 +18,14 @@
         ],
         "normalize": true,
         "activ_type": "relu",
-        "init_weight_scale": 0.5,
+        "init_weight_scale": 2,
         "use_weight_norm": true,
         "use_fourier_bias": true,
         "resid_conn": true,
-        "use_MLP": false
+        "use_MLP": true
     },
     "latent_dim": 24,
     "use_skip_update": false,
-    "lr_max": 1e-3,
-    "num_epochs": 50,
-    "H1_deriv_scaling": 1
+    "lr_max": 5e-4,
+    "num_epochs": 50
 }

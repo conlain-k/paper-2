@@ -347,8 +347,14 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
 
     if model.config.return_resid:
         # compute energy in residual and add that term
+        # resid_loss = (
+        #     model.constlaw.C0_norm(resid).mean() / model.constlaw.energy_scaling
+        # )
+
+        # compute energy in residual
         resid_loss = (
-            model.constlaw.C0_norm(resid).mean() / model.constlaw.energy_scaling
+            compute_strain_energy(resid, model.constlaw(resid, C_field)).mean()
+            / model.constlaw.energy_scaling
         )
 
     if model.config.compute_compat_err:

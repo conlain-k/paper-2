@@ -149,10 +149,12 @@ class FNO_Block(torch.nn.Module):
         x2 = self.norm(x2) if self.normalize else x2
 
         x = self.activ(x1 + x2 + injection)
-        x = self.norm(x) if self.normalize else x
+
+        # don't normalize final output
+        # x = self.norm(x) if self.normalize else x
 
         if self.resid_conn:
             # residual connection
-            x += x0
+            x = x + x0
 
         return x
