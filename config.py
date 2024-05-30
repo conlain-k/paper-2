@@ -6,21 +6,21 @@ import os
 DELIM = "-" * 40
 
 # coefficients for balancing loss functions
-lam_strain = 1
-lam_stress = 10
+lam_strain = 2
+lam_stress = 0
 lam_energy = 0
 
 # penalize compatibility error heavily
 lam_compat = 0
 
-# lam_sum = lam_strain + lam_stress + lam_energy
+lam_sum = lam_strain + lam_stress + lam_energy
 
-# lam_strain = lam_strain / lam_sum
-# lam_stress = lam_stress / lam_sum
-# lam_energy = lam_energy / lam_sum
+lam_strain = lam_strain / lam_sum
+lam_stress = lam_stress / lam_sum
+lam_energy = lam_energy / lam_sum
 
 # residual error is usually small anyways, and we want our DEQ gradients to be accurate
-lam_resid = 100
+lam_resid = 1000
 
 
 @dataclass
@@ -97,7 +97,7 @@ class Config:
     # output_displacement: bool = False
     compute_compat_err: bool = True
 
-    grad_clip_mag: float = 100
+    grad_clip_mag: float = 1
     use_skip_update: bool = False
     enforce_mean: bool = True
 
@@ -207,7 +207,7 @@ class LossSet:
         if self.config.use_deq:
             loss += lam_resid * self.resid_loss
 
-        return loss * 100
+        return loss * 1000
 
     def detach(self):
         return LossSet(

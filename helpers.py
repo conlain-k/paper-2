@@ -31,7 +31,7 @@ CHECKPOINT_DIR = "checkpoints"
 
 
 def mean_L1_error(true, pred):
-    return (pred - true).abs().mean(dim=(-3, -2, -1))
+    return (pred.detach() - true.detach()).abs().mean(dim=(-3, -2, -1))
 
 
 def sync():

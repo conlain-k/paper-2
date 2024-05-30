@@ -331,7 +331,6 @@ class ProjectionBlock(torch.nn.Module):
         activ_type="gelu",
         use_weight_norm=False,
         final_bias=False,
-        final_activ=False,
         normalize=False,
     ):
         super().__init__()
@@ -344,12 +343,7 @@ class ProjectionBlock(torch.nn.Module):
         )
 
         self.activ_1 = get_activ(activ_type, hidden_channels)
-        self.final_activ = final_activ
         self.normalize = normalize
-
-        # set up activation
-        if final_activ:
-            self.activ_2 = get_activ(activ_type, hidden_channels)
 
         # set up normalization
         if normalize:
@@ -360,15 +354,10 @@ class ProjectionBlock(torch.nn.Module):
             self.proj_2 = weight_norm(self.proj_2)
 
     def forward(self, x):
-        # if self.normalize:
-        #     # normalize before first projection layer
-        #     x = self.norm(x)
+
         x = self.proj_1(x)
         x = self.activ_1(x)
 
         x = self.proj_2(x)
-        # apply final activation (if relevant)
-        if self.final_activ:
-            x = self.activ_2(x)
 
         return x

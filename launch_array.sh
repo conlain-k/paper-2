@@ -1,6 +1,11 @@
 # feedforward 
 sbatch run_train.sh -c configs/fno_FF.json 
 sbatch run_train.sh -c configs/fno_FF.json -E
+
+# feedforward 
+sbatch run_train.sh -c configs/fno_FF_Cflat.json 
+sbatch run_train.sh -c configs/fno_FF_Cflat.json -E
+
 # DEQ
 sbatch run_train.sh -c configs/fno_deq.json 
 sbatch run_train.sh -c configs/fno_deq.json -E
@@ -20,5 +25,6 @@ sbatch run_train.sh -c configs/fno_deq_noenergy.json -E
 sbatch run_train.sh -c configs/fno_deq_nopolar.json 
 sbatch run_train.sh -c configs/fno_deq_nopolar.json -E
 
-
-sbatch run_train.sh -c configs/maximalist.json 
+# # run big model with everything
+# sbatch run_train.sh -c configs/maximalist.json 
+# sbatch run_train.sh -c configs/maximalist.json -E

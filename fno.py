@@ -31,7 +31,6 @@ class FNO(torch.nn.Module):
             hidden_channels=final_projection_channels,
             activ_type=activ_type,
             use_weight_norm=use_weight_norm,
-            final_activ=False,
             final_bias=True,
         )
         self.proj = ProjectionBlock(
@@ -40,7 +39,6 @@ class FNO(torch.nn.Module):
             hidden_channels=final_projection_channels,
             activ_type=activ_type,
             use_weight_norm=use_weight_norm,
-            final_activ=False,
             final_bias=False,
         )
 
@@ -63,9 +61,11 @@ class FNO(torch.nn.Module):
         # print(x.shape)
         x = self.lift(x)
 
+        inj = x
+
         for block in self.blocks:
             # apply FNO blocks sequentially
-            x = block(x)
+            x = block(x, inj)
 
         # now do two projection steps, with an activation in the middle
         x = self.proj(x)
@@ -113,8 +113,9 @@ class FNO_Block(torch.nn.Module):
 
         if normalize:
             # group size = 1 (a.k.a. easy layernorm)
-            self.norm_0 = torch.nn.GroupNorm(1, mid_channels)
-            self.norm_1 = torch.nn.GroupNorm(1, mid_channels)
+            # self.norm = torch.nn.GroupNorm(1, mid_channels)
+            self.norm = torch.nn.GroupNorm(1, mid_channels, affine=False)
+            # self.norm = torch.nn.InstanceNorm3d(mid_channels)
 
         # add another local FC layer before activation
         self.use_MLP = use_MLP
@@ -125,41 +126,33 @@ class FNO_Block(torch.nn.Module):
                 activ_type=activ_type,
                 use_weight_norm=use_weight_norm,
                 final_bias=True,
-                final_activ=True,
                 normalize=True,
             )
 
     # just the middle bit of an FNO
-    def forward(self, x):
+    def forward(self, x, injection=0):
         # residual outside normalization
         if self.resid_conn:
             x0 = x
 
-        # print_activ_map(x)
-
-        # normalize before input
-        if self.normalize:
-            x = self.norm_0(x)
-        # print_activ_map(x)
+        x = self.norm(x) if self.normalize else x
 
         x1 = self.conv(x)
+        x1 = self.norm(x1) if self.normalize else x1
 
-        # if self.normalize:
-        #     x1 = self.norm_1(x1)
-        # # print_activ_map(x1)
-        # if self.use_MLP:
-        #     x1 = self.mlp_layer(x1)
-        #     # print_activ_map(x1)
+        # apply MLP if needed
+        if self.use_MLP:
+            x1 = self.mlp_layer(x1)
+            x1 = self.norm(x1) if self.normalize else x1
+
         x2 = self.filt(x)
-        # print_activ_map(x2)
+        x2 = self.norm(x2) if self.normalize else x2
 
-        # now apply activation
-        x = self.activ(x1 + x2)
-        # print_activ_map(x)
+        x = self.activ(x1 + x2 + injection)
+        x = self.norm(x) if self.normalize else x
 
         if self.resid_conn:
             # residual connection
             x += x0
-        # print_activ_map(x)
 
         return x
