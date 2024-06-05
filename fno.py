@@ -31,7 +31,7 @@ class FNO(torch.nn.Module):
             mid_channels,
             hidden_channels=final_projection_channels,
             activ_type=activ_type,
-            use_weight_norm=use_weight_norm,
+            use_weight_norm=False,
             final_bias=True,
         )
         self.proj = ProjectionBlock(
@@ -39,7 +39,7 @@ class FNO(torch.nn.Module):
             out_channels,
             hidden_channels=final_projection_channels,
             activ_type=activ_type,
-            use_weight_norm=use_weight_norm,
+            use_weight_norm=False,
             final_bias=False,
         )
 
@@ -65,9 +65,10 @@ class FNO(torch.nn.Module):
         # self.norm = torch.nn.GroupNorm(1, mid_channels)
         # self.norm = torch.nn.GroupNorm(1, mid_channels, affine=False)
         # normalize all inputs channel-wise to fix contrast issues, etc.
-        self.input_norm = torch.nn.InstanceNorm3d(
-            in_channels, track_running_stats=False, affine=False
-        )
+        # self.input_norm = torch.nn.InstanceNorm3d(
+        #     in_channels, track_running_stats=False, affine=False
+        # )
+        self.input_norm = torch.nn.GroupNorm(1, in_channels)
 
     def forward(self, x):
 
@@ -87,7 +88,7 @@ class FNO(torch.nn.Module):
         # also normalize output of FNO chain
         # x = self.input_norm(x)
         # now do two projection steps, with an activation in the middle
-        x = self.proj(x)
+        x = self.proj(x) * 2.0
 
         return x
 
@@ -123,7 +124,9 @@ class FNO_Block(torch.nn.Module):
         )
 
         # local channel-wise filter
-        self.filt = torch.nn.Conv3d(mid_channels, mid_channels, kernel_size=1)
+        self.filt = torch.nn.Conv3d(
+            mid_channels, mid_channels, kernel_size=1, bias=True
+        )
 
         if use_weight_norm:
             self.filt = weight_norm(self.filt)
@@ -132,8 +135,8 @@ class FNO_Block(torch.nn.Module):
 
         if normalize:
             # group size = 1 (a.k.a. easy layernorm)
-            self.norm = torch.nn.GroupNorm(1, mid_channels)
-            # self.norm = torch.nn.GroupNorm(1, mid_channels, affine=False)
+            # self.norm = torch.nn.GroupNorm(1, mid_channels)
+            self.norm = torch.nn.GroupNorm(1, mid_channels, affine=False)
             # self.norm = torch.nn.InstanceNorm3d(mid_channels)
 
         # add another local FC layer before activation
@@ -144,36 +147,35 @@ class FNO_Block(torch.nn.Module):
                 mid_channels,
                 activ_type=activ_type,
                 use_weight_norm=use_weight_norm,
-                final_bias=True,
+                final_bias=False,
                 normalize=True,
             )
 
     # just the middle bit of an FNO
     def forward(self, x, injection=0):
         # residual outside normalization
-        if self.resid_conn:
-            x0 = x
+        # if self.resid_conn:
+        #     x0 = x
 
+        x = self.activ(self.mlp_layer(self.conv(x)) + self.filt(x) + injection)
         x = self.norm(x) if self.normalize else x
+        # # x1 = self.norm(x1) if self.normalize else x1
 
-        x1 = self.conv(x)
-        # x1 = self.norm(x1) if self.normalize else x1
+        # # apply MLP if needed
+        # if self.use_MLP:
+        #     x1 = self.mlp_layer(x1)
+        #     # x1 = self.norm(x1) if self.normalize else x1
 
-        # apply MLP if needed
-        if self.use_MLP:
-            x1 = self.mlp_layer(x1)
-            # x1 = self.norm(x1) if self.normalize else x1
+        # x2 = self.filt(x)
+        # # x2 = self.norm(x2) if self.normalize else x2
 
-        x2 = self.filt(x)
-        # x2 = self.norm(x2) if self.normalize else x2
-
-        x = self.activ(x1 + x2 + injection)
+        # x = self.activ(x1 + x2 + injection)
 
         # don't normalize final output
         # x = self.norm(x) if self.normalize else x
 
-        if self.resid_conn:
-            # residual connection
-            x = x + x0
+        # if self.resid_conn:
+        #     # residual connection
+        #     x = x + x0
 
         return x

@@ -180,7 +180,7 @@ class Localizer_DEQ(LocalizerBase):
         #     feat.append(eps_avg )
 
         # collect features into a vector
-        print([f.shape for f in feat])
+        # print([f.shape for f in feat])
         nn_features = torch.concatenate(feat, dim=1)
 
         # now return dense feat vec

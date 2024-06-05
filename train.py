@@ -49,7 +49,7 @@ def relative_mse(y_true, y_pred, scale=None):
 
 
 # compute an energy-type loss for two strain-like fields
-def compute_energy_loss(e_true, e_pred, C_field, add_deriv=False):
+def compute_energy_loss(e_true, e_pred, C_field, add_deriv=False, ret_deriv=False):
     resid = e_true - e_pred
 
     Nx = resid.shape[-1]
@@ -71,14 +71,21 @@ def compute_energy_loss(e_true, e_pred, C_field, add_deriv=False):
         resid_grad = torch.stack(resid_grad, dim=-1)
 
         # also sum over last dimension (spatial deriv index) to get squared 2-norm of vector field
-        resid_grad_energy = torch.einsum(
-            "brxyzd, brcxyz, bcxyzd -> bxyz", resid_grad, C_field, resid_grad
+        resid_grad_energy = (
+            torch.einsum(
+                "brxyzd, brcxyz, bcxyzd -> bxyz", resid_grad, C_field, resid_grad
+            )
+            / 10.0
         )
 
         print(f"Grad loss is {resid_grad_energy.mean():4f}")
         loss += resid_grad_energy
 
-    return resid_grad_energy
+    if ret_deriv:
+
+        return resid_energy, resid_grad_energy
+
+    return loss
 
 
 def deriv_loss(y_true, y_pred=None, reduce=True):
@@ -158,18 +165,8 @@ def plot_worst(epoch, model, micro, strain_true):
     stressdiv_pred = stressdiv(stress_pred, use_FFT_deriv=False)
     stressdiv_true = stressdiv(stress_true, use_FFT_deriv=False)
 
-    err_energy = compute_strain_energy(
-        strain_true - strain_pred, stress_true - stress_pred
-    )
-
-    N = strain_true.shape[-1]
-    L = 1
-    h = L / N
-
-    # print("nhl", N, h, L)
-
-    err_energy_deriv = (
-        deriv_loss(err_energy, None, reduce=False) / model.constlaw.energy_scaling
+    energy_err, energy_err_grad = compute_energy_loss(
+        strain_true, strain_pred, C_field, add_deriv=True, ret_deriv=True
     )
 
     print(
@@ -325,17 +322,17 @@ def plot_worst(epoch, model, micro, strain_true):
     plot_pred(
         epoch,
         micro[0, 0][sind],
-        0 * err_energy[0, 0][sind],  # / model.constlaw.energy_scaling,
-        err_energy[0, 0][sind],  # / model.constlaw.energy_scaling,
-        "err_energy",
+        0 * energy_err[0][sind],  # / model.constlaw.energy_scaling,
+        energy_err[0][sind],  # / model.constlaw.energy_scaling,
+        "energy_err",
         model.config.image_dir,
     )
     plot_pred(
         epoch,
         micro[0, 0][sind],
-        0 * err_energy_deriv[0][sind],
-        err_energy_deriv[0][sind],
-        "err_energy_deriv",
+        0 * energy_err_grad[0][sind],
+        energy_err_grad[0][sind],
+        "energy_err_grad",
         model.config.image_dir,
     )
 
@@ -454,15 +451,15 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
 
     if model.config.return_resid:
         # compute energy in residual and add that term
-        # resid_loss = (
-        #     model.constlaw.C0_norm(resid).mean() / model.constlaw.energy_scaling
-        # )
+        resid_loss = (
+            model.constlaw.C0_norm(resid).mean() / model.constlaw.energy_scaling
+        )
 
         # compute energy in residual
-        resid_loss = (
-            compute_strain_energy(resid, model.constlaw(resid, C_field)).mean()
-            / model.constlaw.energy_scaling
-        )
+        # resid_loss = (
+        #     compute_strain_energy(resid, model.constlaw(resid, C_field)).mean()
+        #     / model.constlaw.energy_scaling
+        # )
 
     if model.config.compute_compat_err:
 
