@@ -47,12 +47,41 @@ def relative_mse(y_true, y_pred, scale=None):
 
     return val.mean()
 
-    ybar = y_true.mean(dim=(-3, -2, -1, 1), keepdim=True)
-    scale_rel = ((y_true - ybar) ** 2).mean(dim=(-3, -2, -1, 1), keepdim=True).sqrt()
-    return MSE_Loss(y_true / scale_rel, y_pred / scale_rel, scale=None)
+
+# compute an energy-type loss for two strain-like fields
+def compute_energy_loss(e_true, e_pred, C_field, add_deriv=False):
+    resid = e_true - e_pred
+
+    Nx = resid.shape[-1]
+    # domain is zero to 1
+    L = 1
+    # grid spacing
+    h = L / Nx
+
+    # contract strain and stress dimensions
+    resid_energy = torch.einsum("brxyz, brcxyz, bcxyz -> bxyz", resid, C_field, resid)
+
+    loss = resid_energy
+
+    print(f"Resid loss is {resid_energy.mean():4f}")
+
+    if add_deriv:
+        # take finite differences
+        resid_grad = central_diff_3d(resid, h=1)
+        resid_grad = torch.stack(resid_grad, dim=-1)
+
+        # also sum over last dimension (spatial deriv index) to get squared 2-norm of vector field
+        resid_grad_energy = torch.einsum(
+            "brxyzd, brcxyz, bcxyzd -> bxyz", resid_grad, C_field, resid_grad
+        )
+
+        print(f"Grad loss is {resid_grad_energy.mean():4f}")
+        loss += resid_grad_energy
+
+    return resid_grad_energy
 
 
-def deriv_loss(y_true, y_pred):
+def deriv_loss(y_true, y_pred=None, reduce=True):
     # compute loss of spatial derivatives (part of H1 loss)
 
     # # get spatial discr
@@ -65,16 +94,22 @@ def deriv_loss(y_true, y_pred):
     # take finite differences of each field
     # override discr size to scale things nicely
     diff_true = central_diff_3d(y_true, h=1)
-    diff_pred = central_diff_3d(y_pred, h=1)
 
-    # concatenate along channel dim
-    diff_true = torch.cat(diff_true, dim=1)
-    diff_pred = torch.cat(diff_pred, dim=1)
+    # stack at last dim
+    diff_true = torch.stack(diff_true, dim=-1)
 
-    # print(diff_true.shape)
+    if y_pred is not None:
+        diff_pred = central_diff_3d(y_pred, h=1)
+        diff_pred = torch.stack(diff_pred, dim=-1)
 
-    # mean squared Frob-norm of error in stress gradients
-    diff_loss = ((diff_true - diff_pred) ** 2).sum(dim=(1)).mean()
+        resid = diff_true - diff_pred
+    else:
+        resid = diff_true
+
+    # mean squared Frob-norm of error in gradients
+    diff_loss = (resid**2).sum(dim=(-1))
+    if reduce:
+        diff_loss = diff_loss.mean()
 
     return diff_loss
 
@@ -116,12 +151,25 @@ def plot_worst(epoch, model, micro, strain_true):
     VM_stress_pred = VMStress(stress_pred)
     VM_stress_true = VMStress(stress_true)
 
+    # L1 VM stress error
+    LVE = mean_L1_error(VM_stress_pred, VM_stress_true) / VM_stress_true.abs().mean()
+
     # also compute VM stresses at that location
     stressdiv_pred = stressdiv(stress_pred, use_FFT_deriv=False)
     stressdiv_true = stressdiv(stress_true, use_FFT_deriv=False)
 
     err_energy = compute_strain_energy(
         strain_true - strain_pred, stress_true - stress_pred
+    )
+
+    N = strain_true.shape[-1]
+    L = 1
+    h = L / N
+
+    # print("nhl", N, h, L)
+
+    err_energy_deriv = (
+        deriv_loss(err_energy, None, reduce=False) / model.constlaw.energy_scaling
     )
 
     print(
@@ -138,10 +186,10 @@ def plot_worst(epoch, model, micro, strain_true):
         strain_pred, stress_pred
     )
 
-    C11_true = est_homog(strain_true, stress_true, (0, 0)).squeeze()
-    C11_pred = est_homog(strain_pred, stress_pred, (0, 0)).squeeze()
+    # C11_tr_homog(straue = est_homog(strain_true, stress_true, (0, 0)).squeeze()
+    # C11_pred = estin_pred, stress_pred, (0, 0)).squeeze()
     print(
-        f"Saving fig for epoch {epoch}, plotting micro {PLOT_IND} near {ind_max}, homog err is {(C11_true - C11_pred).abs():5f}"
+        f"Saving fig for epoch {epoch}, plotting micro {PLOT_IND} near {ind_max}, VM L1 err is {LVE.item():4f}"
     )
 
     print("Compatibility error stats")
@@ -154,12 +202,53 @@ def plot_worst(epoch, model, micro, strain_true):
     # Plot z=const slice
     sind = s_[:, :, ind_max[-1]]
 
+    stress_loss = (
+        model.constlaw.S0_norm((stress_true - stress_pred))
+        / model.constlaw.energy_scaling
+    )
+
+    strain_loss = (
+        model.constlaw.C0_norm((strain_true - strain_pred))
+        / model.constlaw.energy_scaling
+    )
+
+    stress_loss_deriv = deriv_loss(stress_loss, reduce=False)
+
+    strain_loss_deriv = deriv_loss(strain_loss, reduce=False)
+    print(strain_loss.shape, stress_loss_deriv.shape)
+
     plot_pred(
         epoch,
         micro[0, 0][sind],
         strain_true[0, FIELD_IND][sind],  # / model.constlaw.strain_scaling,
         strain_pred[0, FIELD_IND][sind],  # / model.constlaw.strain_scaling,
         "strain",
+        model.config.image_dir,
+    )
+
+    plot_pred(
+        epoch,
+        micro[0, 0][sind],
+        0 * strain_loss[0][sind],  # / model.constlaw.strain_scaling,
+        strain_loss[0][sind],  # / model.constlaw.strain_scaling,
+        "strain_loss",
+        model.config.image_dir,
+    )
+
+    plot_pred(
+        epoch,
+        micro[0, 0][sind],
+        0 * strain_loss_deriv[sind],  # / model.constlaw.strain_scaling,
+        strain_loss_deriv[sind],  # / model.constlaw.strain_scaling,
+        "strain_loss_deriv",
+        model.config.image_dir,
+    )
+    plot_pred(
+        epoch,
+        micro[0, 0][sind],
+        0 * stress_loss_deriv[sind],  # / model.constlaw.strain_scaling,
+        stress_loss_deriv[sind],  # / model.constlaw.strain_scaling,
+        "stress_loss_deriv",
         model.config.image_dir,
     )
     plot_pred(
@@ -218,6 +307,15 @@ def plot_worst(epoch, model, micro, strain_true):
     plot_pred(
         epoch,
         micro[0, 0][sind],
+        0 * stress_loss[0][sind],
+        stress_loss[0][sind],
+        "stress_loss",
+        model.config.image_dir,
+    )
+
+    plot_pred(
+        epoch,
+        micro[0, 0][sind],
         energy_true[0, 0][sind],  # / model.constlaw.energy_scaling,
         energy_pred[0, 0][sind],  # / model.constlaw.energy_scaling,
         "energy",
@@ -230,6 +328,14 @@ def plot_worst(epoch, model, micro, strain_true):
         0 * err_energy[0, 0][sind],  # / model.constlaw.energy_scaling,
         err_energy[0, 0][sind],  # / model.constlaw.energy_scaling,
         "err_energy",
+        model.config.image_dir,
+    )
+    plot_pred(
+        epoch,
+        micro[0, 0][sind],
+        0 * err_energy_deriv[0][sind],
+        err_energy_deriv[0][sind],
+        "err_energy_deriv",
         model.config.image_dir,
     )
 
@@ -251,6 +357,15 @@ def compute_quants(model, strain, C_field):
     return stress, stress_polar, energy
 
 
+def H1_loss(resid, scale, H1_scale):
+    L2_term = (resid**2) / scale
+    H1_term = deriv_loss(resid) * H1_scale / scale
+
+    print(L2_term, H1_term)
+
+    return L2_term + H1_term
+
+
 # def loss(y_true, y_pred, inner_prod=None, add_sobolev=False, scaling=1):
 #     err = y_true - y_pred
 #     # if given a weighted inner product, use that (use 2norm)
@@ -268,78 +383,70 @@ def compute_quants(model, strain, C_field):
 
 def compute_losses(model, strain_pred, strain_true, C_field, resid):
 
-    stress_pred, _, energy_pred = compute_quants(model, strain_pred, C_field)
-    stress_true, _, energy_true = compute_quants(model, strain_true, C_field)
+    stress_pred, _, _ = compute_quants(model, strain_pred, C_field)
+    stress_true, _, _ = compute_quants(model, strain_true, C_field)
 
-    # if model.config.use_C0_weighted_loss:
-    #     # use C0 inner product
-    strain_loss = (
-        model.constlaw.C0_norm((strain_true - strain_pred)).mean()
+    VMStress_pred = VMStress(stress_pred) / model.constlaw.stress_scaling
+    VMStress_true = VMStress(stress_true) / model.constlaw.stress_scaling
+
+    stress_loss = ((VMStress_pred - VMStress_true).abs()).mean()
+    stress_loss = stress_loss
+
+    # compute C0-norm of stress error
+    stress_err_norm = (
+        model.constlaw.S0_norm((stress_true - stress_pred))
         / model.constlaw.energy_scaling
     )
+    stress_loss_L2 = stress_err_norm.mean()
 
-    stress_loss = (
-        model.constlaw.S0_norm((stress_true - stress_pred)).mean()
-        / model.constlaw.energy_scaling
-    )
-
-    # else:
-    #     # use L2 inner product
-    #     strain_loss = (
-    #         ((strain_true - strain_pred) / model.constlaw.strain_scaling) ** 2
-    #     ).mean()
-    #     stress_loss = (
-    #         ((stress_true - stress_pred) / model.constlaw.stress_scaling) ** 2
-    #     ).mean()
-
-    # if model.config.use_sobolev_loss:
-    #     deriv_loss_strain = (
-    #         deriv_loss(
-    #             strain_true / model.constlaw.strain_scaling,
-    #             strain_pred / model.constlaw.strain_scaling,
-    #         )
-    #         * 0.2
-    #     )
-    #     deriv_loss_stress = (
-    #         deriv_loss(
-    #             stress_true / model.constlaw.stress_scaling,
-    #             stress_pred / model.constlaw.stress_scaling,
-    #         )
-    #         * 5
-    #     )
-
-    # print(f"strain {strain_loss:5f} deriv {deriv_loss_strain:5f}")
-
-    # print(
-    #     f"strain {strain_loss:5f} deriv {deriv_loss_strain:5f} stress {stress_loss:5f} deriv {deriv_loss_stress:5f}"
-    # )
-
-    # strain_loss += deriv_loss_strain  # * model.config.H1_deriv_scaling
-    # stress_loss += deriv_loss_stress  # * model.config.H1_deriv_scaling
-
-    stressdiv_pred = stressdiv(stress_pred, use_FFT_deriv=False)
-    stressdiv_true = stressdiv(stress_true, use_FFT_deriv=False)
-
-    energy_loss = (
-        (stressdiv_pred - stressdiv_true) ** 2
-    ).mean() / model.constlaw.stress_scaling
+    stress_deriv_loss = deriv_loss(stress_err_norm) / 10.0
+    stress_loss = stress_loss_L2 + stress_deriv_loss
 
     # no term here
     # strain_loss = 0 * stress_loss
 
-    strain_loss = (
-        compute_strain_energy(
-            strain_true - strain_pred, stress_true - stress_pred
-        ).mean()
+    # energy of strain error
+    err_energy = (
+        compute_strain_energy(strain_true - strain_pred, stress_true - stress_pred)
+        / model.constlaw.energy_scaling
+    )
+    energy_loss_L2 = err_energy.mean()
+
+    energy_deriv_loss = deriv_loss(err_energy)
+
+    energy_loss = energy_loss_L2  # + energy_deriv_loss
+
+    # energy_true = compute_strain_energy(strain_true, stress_true)
+    # energy_pred = compute_strain_energy(strain_pred, stress_pred)
+    # energy_err = (energy_true - energy_pred).abs()
+    # energy_loss = energy_err.mean() / model.constlaw.energy_scaling
+
+    # take 2 norm, averaged over space and batch
+    # penalize angle between error and prediction
+    strain_resid = (
+        model.constlaw.C0_norm((strain_true - strain_pred))
         / model.constlaw.energy_scaling
     )
 
-    print(f"strain {strain_loss:5f} stress {stress_loss:5f} stressdiv {energy_loss:5f}")
-    # energy_loss = MSE_Loss(
-    #     energy_true,
-    #     energy_pred,
-    #     scale=model.constlaw.energy_scaling,
-    #     # deriv_scale=model.config.H1_deriv_scaling,
+    strain_loss_L2 = strain_resid.mean()
+    strain_deriv_loss = deriv_loss(strain_resid) / 20.0
+
+    strain_loss = strain_loss_L2 + strain_deriv_loss
+
+    energy_loss = (
+        compute_energy_loss(strain_true, strain_pred, C_field, add_deriv=True).mean()
+        / model.constlaw.energy_scaling
+    )
+
+    # strain_loss = (
+    #     strain_true - strain_pred
+    # ).abs().mean() / model.constlaw.strain_scaling
+
+    print(
+        f"L2: strain {strain_loss_L2:4f} stress {stress_loss_L2:4f} energy {energy_loss_L2:4f}"
+    )
+    # print(
+    #     f"H1: strain {strain_deriv_loss:4f} stress {stress_deriv_loss:4f} energy {energy_deriv_loss:4f}"
     # )
 
     resid_loss = torch.as_tensor(0.0)
@@ -372,6 +479,7 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
         compat_loss,
     )
 
+    # return losses.detach(), stress_loss
     return losses.detach(), losses.compute_total()
 
 
@@ -428,9 +536,6 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
             strain_pred = output
             resid = 0 * strain_pred
 
-        # TODO this should not be necessary
-        strain_pred = strain_pred.detach()
-
         assert not torch.isnan(strain_pred).any()
 
         C_field = model.constlaw.compute_C_field(micros)
@@ -451,7 +556,7 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
         # worst_homog_ind = torch.argmax((C11_true - C11_pred).abs())
 
         # print(
-        #     f"Batch {ind} worst is {worst_homog_ind} err {(C11_true - C11_pred).abs()[worst_homog_ind]:5f}"
+        #     f"Batch {ind} worst is {worst_homog_ind} err {(C11_true - C11_pred).abs()[worst_homog_ind]:4f}"
         # )
 
         homog_err += (C11_true - C11_pred).abs().sum()
@@ -475,7 +580,8 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
         LVE = (
             mean_L1_error(VM_stress_pred, VM_stress_true) / VM_stress_true.abs().mean()
         )
-        # print(LVE.shape, LVE)
+        # print(mean_L1_error(VM_stress_pred, VM_stress_true))
+        # print(VM_stress_true.abs().mean())
         # now average out over each instance in train set
         LVE = LVE.sum() / len(eval_loader.dataset)
 
@@ -502,20 +608,20 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
         wandb.log(
             {
                 "epoch": epoch,
-                f"total_{data_mode}_loss": running_loss.compute_total(),
-                f"{data_mode}_losses": running_loss.to_dict(),
+                f"total_valid_loss": running_loss.compute_total(),
+                f"valid_losses": running_loss.to_dict(),
                 "homog_err_rel": homog_err_abs / mean_homog,
-                f"{data_mode}_exx_err": L1_strain_err,
-                f"{data_mode}_VM_err": L1_VM_stress_err,
+                f"valid_exx_err": L1_strain_err,
+                f"valid_VM_err": L1_VM_stress_err,
             }
         )
 
     # print some metrics on the epoch
     print(f"Epoch {epoch}, {data_mode} loss: {running_loss}")
     print(f"Normalized e_xx absolute error is: {L1_strain_err * 100:.5} %")
-    print(f"Normalized VM stress absolute error is: {L1_VM_stress_err * 100:.5} %")
+    print(f"Normalized VM stress absolute error is: {L1_VM_stress_err:.5}")
     print(
-        f"Abs homog err is {homog_err_abs:5f}, rel is {homog_err_abs / mean_homog:5f}"
+        f"Abs homog err is {homog_err_abs:4f}, rel is {homog_err_abs / mean_homog:4f}"
     )
     print(
         f"Pred range: min {strain_pred[:, 0].min():.5}, max {strain_pred[:, 0].max():.5}, mean {strain_pred[:, 0].mean():.5}, std {strain_pred[:, 0].std():.5}"
@@ -593,8 +699,13 @@ def train_model(model, config, train_loader, valid_loader):
             # only predict first component
             strain_true = strain_true.to(config.device)
 
+            # zero out gradients
+            optimizer.zero_grad()
+
+            # apply model forward pass
             output = model(micros)
 
+            # extract output
             if config.use_deq and config.return_resid:
                 (strain_pred, resid) = output
             else:
@@ -628,7 +739,7 @@ def train_model(model, config, train_loader, valid_loader):
             # now accumulate losses for future
             running_loss += total_loss.detach() / len(train_loader)
 
-            # print(f"batch {batch_ind}: {total_loss.detach().item():5f}")
+            # print(f"batch {batch_ind}: {total_loss.detach().item():4f}")
             # printing once per epoch
             if batch_ind == 0:
                 # print split on first batch to track progress
@@ -637,16 +748,16 @@ def train_model(model, config, train_loader, valid_loader):
                     f"Normalized e_xx absolute error is: {(strain_pred - strain_true)[:, 0].abs().mean() / model.constlaw.strain_scaling * 100:.5} %"
                 )
                 print(
-                    f"Strain Pred range: min {strain_pred[:, 0].min():5f}, max {strain_pred[:, 0].max():5f}, mean {strain_pred[:, 0].mean():5f}, std {strain_pred[:, 0].std():5f}"
+                    f"Strain Pred range: min {strain_pred[:, 0].min():4f}, max {strain_pred[:, 0].max():4f}, mean {strain_pred[:, 0].mean():4f}, std {strain_pred[:, 0].std():4f}"
                 )
                 print(
-                    f"Strain True range: min {strain_true[:, 0].min():5f}, max {strain_true[:, 0].max():5f}, mean {strain_true[:, 0].mean():5f}, std {strain_true[:, 0].std():5f}"
+                    f"Strain True range: min {strain_true[:, 0].min():4f}, max {strain_true[:, 0].max():4f}, mean {strain_true[:, 0].mean():4f}, std {strain_true[:, 0].std():4f}"
                 )
                 print(
-                    f"Stress Pred range: min {stress_pred[:, 0].min():5f}, max {stress_pred[:, 0].max():5f}, mean {stress_pred[:, 0].mean():5f}, std {stress_pred[:, 0].std():5f}"
+                    f"Stress Pred range: min {stress_pred[:, 0].min():4f}, max {stress_pred[:, 0].max():4f}, mean {stress_pred[:, 0].mean():4f}, std {stress_pred[:, 0].std():4f}"
                 )
                 print(
-                    f"Stress True range: min {stress_true[:, 0].min():5f}, max {stress_true[:, 0].max():5f}, mean {stress_true[:, 0].mean():5f}, std {stress_true[:, 0].std():5f}"
+                    f"Stress True range: min {stress_true[:, 0].min():4f}, max {stress_true[:, 0].max():4f}, mean {stress_true[:, 0].mean():4f}, std {stress_true[:, 0].std():4f}"
                 )
 
         # end epoch
@@ -670,7 +781,7 @@ def train_model(model, config, train_loader, valid_loader):
 
         print(f"Training pass took {diff}s")
 
-        print(f"Epoch {e}: instance-average loss was {running_loss:5f}")
+        print(f"Epoch {e}: instance-average loss was {running_loss:4f}")
 
         if running_loss < best_loss:
             best_loss = running_loss.detach()

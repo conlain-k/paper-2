@@ -41,6 +41,9 @@ C_ROT_MOOSE = torch.tensor(
     ]
 )
 
+CHECK_TEST = "checkpoints/model_fno_deq_noenergy_17.7M_s31_best.ckpt"
+CONF_TEST = "configs/fno_deq_noenergy.json"
+
 
 def batched_vector_grad(a):
     # assumes f is [b x d x i x j x k]
@@ -331,9 +334,14 @@ def test_euler_pred():
     euler_ang = torch.from_numpy(euler_ang).cuda()
 
     checkpoint_file = "checkpoints/fno_deq_best.ckpt"
+    checkpoint_file = "checkpoints/model_fno_deq_17.7M_s31_best.ckpt"
+
     conf_file = "configs/fno_deq.json"
 
-    conf_args = load_conf_override(conf_file)
+    checkpoint_file = "checkpoints/model_fno_deq_hybrid_17.7M_s31_best.ckpt"
+    conf_file = "configs/fno_deq_hybrid.json"
+
+    conf_args = load_conf_override(CONF_TEST)
     # conf_args["use_stress_polarization"] = True
     # conf_args["use_energy"] = True
     # print(conf_args)
@@ -352,7 +360,7 @@ def test_euler_pred():
     # override to set crystalline const law
 
     # pull in saved weights
-    load_checkpoint(checkpoint_file, model, strict=False)
+    load_checkpoint(CHECK_TEST, model, strict=False)
 
     model.set_constlaw_crystal(C11, C12, C44)
     model.greens_op = GreensOp(model.constlaw, 62)
@@ -403,7 +411,7 @@ def test_euler_pred():
     print("homog shape", homog_true.shape)
 
     print(
-        f"\nHomog true: {homog_true:5f} pred: {homog_pred:5f} rel_err: {(homog_true - homog_pred)/homog_true:5f}"
+        f"\nHomog true: {homog_true:4f} pred: {homog_pred:4f} rel_err: {(homog_true - homog_pred)/homog_true:4f}"
     )
 
     L1_strain_err = (strain_pred - strain_true).abs()[0, 0]
@@ -476,12 +484,12 @@ def test_euler_pred():
         cmap="coolwarm",
     )
 
-    # dump predictions to a file
-    f = File("crystal_pred.h5", "w")
-    write_dataset_to_h5(C_field, "C_field", f)
-    write_dataset_to_h5(strain_pred, "strain", f)
-    write_dataset_to_h5(stress_pred, "stress", f)
-    write_dataset_to_h5(euler_ang.unsqueeze(0), "euler_ang", f)
+    # # dump predictions to a file
+    # f = File("crystal_pred.h5", "w")
+    # write_dataset_to_h5(C_field, "C_field", f)
+    # write_dataset_to_h5(strain_pred, "strain", f)
+    # write_dataset_to_h5(stress_pred, "stress", f)
+    # write_dataset_to_h5(euler_ang.unsqueeze(0), "euler_ang", f)
 
 
 def test_FFT_iters_crystal():
@@ -673,9 +681,13 @@ def test_FFT_iters_2phase():
 
 def test_deq_convergence():
     checkpoint_file = "checkpoints/fno_deq_best.ckpt"
+    checkpoint_file = "checkpoints/model_fno_deq_17.7M_s31_best.ckpt"
     conf_file = "configs/fno_deq.json"
 
-    conf_args = load_conf_override(conf_file)
+    checkpoint_file = "checkpoints/model_fno_deq_hybrid_17.7M_s31_best.ckpt"
+    conf_file = "configs/fno_deq_hybrid.json"
+
+    conf_args = load_conf_override(CONF_TEST)
 
     config = Config(**conf_args)
     config.return_deq_trace = True
@@ -683,10 +695,12 @@ def test_deq_convergence():
 
     config.deq_args["f_max_iter"] = N_MAX
     config.deq_args["n_states"] = N_MAX
+    config.deq_args["f_solver"] = "anderson"
+    config.deq_args["f_tol"] = 1e-8
 
     model = make_localizer(config)
     model.setConstParams(E_VALS, NU_VALS, E_BAR)
-    load_checkpoint(checkpoint_file, model, strict=False)
+    load_checkpoint(CHECK_TEST, model, strict=False)
     # model = model.cuda()
     # required to get n_states to behave
     model.train()
@@ -713,6 +727,8 @@ def test_deq_convergence():
         / model.constlaw.strain_scaling
         for eps in strain_trace
     ]
+
+    print("L1 Strain errors is", errs)
     # sum difference along each component
     diff = (
         torch.diff(strain_trace, dim=0)

@@ -6,9 +6,10 @@ import os
 DELIM = "-" * 40
 
 # coefficients for balancing loss functions
-lam_strain = 1
+lam_strain = 0
 lam_stress = 0
-lam_energy = 0
+lam_energy = 1
+
 
 # penalize compatibility error heavily
 lam_compat = 0
@@ -39,7 +40,7 @@ class Config:
 
     loader_args: dict = field(
         default_factory=lambda: {
-            DataMode.TRAIN: {"batch_size": 16, "shuffle": True, "num_workers": 1},
+            DataMode.TRAIN: {"batch_size": 32, "shuffle": True, "num_workers": 1},
             DataMode.VALID: {"batch_size": 128, "shuffle": False, "num_workers": 1},
             DataMode.TEST: {"batch_size": 128, "shuffle": False, "num_workers": 1},
         }
@@ -53,8 +54,8 @@ class Config:
         default_factory=lambda: {
             "f_solver": "anderson",
             "b_solver": "anderson",
-            "f_max_iter": 16,
-            "b_max_iter": 16,
+            "f_max_iter": 32,
+            "b_max_iter": 32,
             "f_tol": 1e-4,
             "b_tol": 1e-5,
             "use_ift": True,
@@ -97,7 +98,7 @@ class Config:
     # output_displacement: bool = False
     compute_compat_err: bool = True
 
-    grad_clip_mag: float = 1
+    grad_clip_mag: float = 10
     use_skip_update: bool = False
     enforce_mean: bool = True
 
@@ -207,7 +208,7 @@ class LossSet:
         if self.config.use_deq:
             loss += lam_resid * self.resid_loss
 
-        return loss * 1000
+        return loss
 
     def detach(self):
         return LossSet(

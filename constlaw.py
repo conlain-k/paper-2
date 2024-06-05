@@ -337,6 +337,7 @@ def compute_strain_from_displacment(disp, use_FFT_deriv=False):
 
 def compute_strain_energy(strain, stress):
     # first compute elementwise strain ED, then add back a "channel" dimension
+    # add ellipsis to allow for strain-gradient-type calculations
     U = torch.einsum("brxyz, brxyz -> bxyz", strain, stress)
     U = U.unsqueeze(1)
     return U

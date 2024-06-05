@@ -1,7 +1,8 @@
 {
     "_description": "DEQ FNO solver using only micro and strain as inputs",
     "_parent": "configs/fno_deq.json",
-    "use_micro": true,
+    "use_micro": false,
+    "use_C_flat": true,
     "use_strain": true,
     "use_bc_strain": false,
     "use_stress": false,

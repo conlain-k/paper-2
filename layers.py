@@ -345,9 +345,9 @@ class ProjectionBlock(torch.nn.Module):
         self.activ_1 = get_activ(activ_type, hidden_channels)
         self.normalize = normalize
 
-        # set up normalization
-        if normalize:
-            self.norm = torch.nn.InstanceNorm3d(in_channels)
+        # # set up normalization
+        # if normalize:
+        #     self.norm = torch.nn.InstanceNorm3d(in_channels)
 
         if use_weight_norm:
             self.proj_1 = weight_norm(self.proj_1)

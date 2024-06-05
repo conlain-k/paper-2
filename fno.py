@@ -21,6 +21,7 @@ class FNO(torch.nn.Module):
         use_weight_norm=False,
         modes=(10, 10),
         use_MLP=False,
+        use_injection=False,
         **kwargs,
     ):
         super().__init__()
@@ -57,16 +58,34 @@ class FNO(torch.nn.Module):
 
         self.blocks = torch.nn.ModuleList(blocks)
 
+        self.use_injection = use_injection
+
+        # if normalize:
+        # group size = 1 (a.k.a. easy layernorm)
+        # self.norm = torch.nn.GroupNorm(1, mid_channels)
+        # self.norm = torch.nn.GroupNorm(1, mid_channels, affine=False)
+        # normalize all inputs channel-wise to fix contrast issues, etc.
+        self.input_norm = torch.nn.InstanceNorm3d(
+            in_channels, track_running_stats=False, affine=False
+        )
+
     def forward(self, x):
-        # print(x.shape)
+
+        x = self.input_norm(x)
         x = self.lift(x)
 
-        inj = x
+        if self.use_injection:
+            inj = x
+        else:
+            # don't add anything
+            inj = 0.0
 
         for block in self.blocks:
             # apply FNO blocks sequentially
             x = block(x, inj)
 
+        # also normalize output of FNO chain
+        # x = self.input_norm(x)
         # now do two projection steps, with an activation in the middle
         x = self.proj(x)
 
@@ -113,8 +132,8 @@ class FNO_Block(torch.nn.Module):
 
         if normalize:
             # group size = 1 (a.k.a. easy layernorm)
-            # self.norm = torch.nn.GroupNorm(1, mid_channels)
-            self.norm = torch.nn.GroupNorm(1, mid_channels, affine=False)
+            self.norm = torch.nn.GroupNorm(1, mid_channels)
+            # self.norm = torch.nn.GroupNorm(1, mid_channels, affine=False)
             # self.norm = torch.nn.InstanceNorm3d(mid_channels)
 
         # add another local FC layer before activation
@@ -138,15 +157,15 @@ class FNO_Block(torch.nn.Module):
         x = self.norm(x) if self.normalize else x
 
         x1 = self.conv(x)
-        x1 = self.norm(x1) if self.normalize else x1
+        # x1 = self.norm(x1) if self.normalize else x1
 
         # apply MLP if needed
         if self.use_MLP:
             x1 = self.mlp_layer(x1)
-            x1 = self.norm(x1) if self.normalize else x1
+            # x1 = self.norm(x1) if self.normalize else x1
 
         x2 = self.filt(x)
-        x2 = self.norm(x2) if self.normalize else x2
+        # x2 = self.norm(x2) if self.normalize else x2
 
         x = self.activ(x1 + x2 + injection)
 
