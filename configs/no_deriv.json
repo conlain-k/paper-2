@@ -1,0 +1,7 @@
+{
+    "_description": "FNO solver trained on strain only",
+    "_parent": "configs/fno_FF.json",
+    "lam_strain": 1,
+    "lam_stress": 1,
+    "H1_deriv_scaling": 0
+}

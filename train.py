@@ -38,6 +38,47 @@ def relative_PRMS(y_true, y_pred, scale=None):
     return PRMS_loss(y_true / scale_rel, y_pred / scale_rel, scale=None)
 
 
+# compute an energy-type loss for two strain-like fields
+def compute_energy_loss(model, e_true, e_pred, micro, add_deriv=False, ret_deriv=False):
+    C_field = torch.einsum("bhxyz, hrc -> brcxyz", micro, model.constlaw.stiffness_mats)
+    resid = e_true - e_pred
+
+    Nx = resid.shape[-1]
+    # domain is zero to 1
+    L = 1
+    # grid spacing
+    h = L / Nx
+
+    # contract strain and stress dimensions
+    resid_energy = torch.einsum("brxyz, brcxyz, bcxyz -> bxyz", resid, C_field, resid)
+
+    loss = resid_energy
+
+    # print(f"Resid loss is {resid_energy.mean():4f}")
+
+    if add_deriv:
+        # take finite differences
+        resid_grad = central_diff_3d(resid, h=1)
+        resid_grad = torch.stack(resid_grad, dim=-1)
+
+        # also sum over last dimension (spatial deriv index) to get squared 2-norm of vector field
+        resid_grad_energy = (
+            torch.einsum(
+                "brxyzd, brcxyz, bcxyzd -> bxyz", resid_grad, C_field, resid_grad
+            )
+            / 10.0
+        )
+
+        # print(f"Grad loss is {resid_grad_energy.mean():4f}")
+        loss += resid_grad_energy
+
+    if ret_deriv:
+
+        return resid_energy, resid_grad_energy
+
+    return loss
+
+
 def H1_loss(y_true, y_pred, scale=None, deriv_scale=10):
     # resid = y_true - y_pred
 
@@ -46,7 +87,7 @@ def H1_loss(y_true, y_pred, scale=None, deriv_scale=10):
     diff_resid = torch.stack(diff_resid, dim=1)
 
     L2_loss = PRMS_loss(y_true, y_pred, scale=scale)
-    diff_loss = PRMS_loss(diff_resid, 0 * diff_resid, scale=scale) / deriv_scale
+    diff_loss = PRMS_loss(diff_resid, 0 * diff_resid, scale=scale) * deriv_scale
 
     # print(f"L2 is {L2_loss}, diff is {diff_loss}")
 
@@ -243,7 +284,7 @@ def compute_quants(model, strain, micros):
     return stress, stress_polar, energy
 
 
-def compute_losses(model, quants_pred, quants_true, resid):
+def compute_losses(model, micros, quants_pred, quants_true, resid):
 
     strain_pred, stress_pred, energy_pred = quants_pred
     strain_true, stress_true, energy_true = quants_true
@@ -260,25 +301,29 @@ def compute_losses(model, quants_pred, quants_true, resid):
         scale=model.stress_scaling,
         deriv_scale=model.config.H1_deriv_scaling,
     )
-    energy_loss = H1_loss(
-        energy_true,
-        energy_pred,
-        scale=model.energy_scaling,
-        deriv_scale=model.config.H1_deriv_scaling,
-    )
+    # energy_loss = H1_loss(
+    #     energy_true,
+    #     energy_pred,
+    #     scale=model.energy_scaling,
+    #     deriv_scale=model.config.H1_deriv_scaling,
+    # )
 
-    resid_loss = 0
-    stressdiv_loss = 0
+    energy_loss = compute_energy_loss(
+        model, strain_true, strain_pred, micros, add_deriv=True
+    ).mean()
+
+    resid_loss = torch.tensor(0.0)
+    stressdiv_loss = torch.tensor(0.0)
 
     if model.config.return_resid:
         resid_loss = 100 * (resid**2).mean().sqrt() / model.strain_scaling
 
-    if model.config.compute_stressdiv:
-        stressdiv_loss = (
-            100
-            * (stressdiv(stress_pred, use_FFT_deriv=True) ** 2).mean().sqrt()
-            / model.stress_scaling
-        )
+    # if model.config.compute_stressdiv:
+    #     stressdiv_loss = (
+    #         100
+    #         * (stressdiv(stress_pred, use_FFT_deriv=True) ** 2).mean().sqrt()
+    #         / model.stress_scaling
+    #     )
 
     losses = LossSet(
         model.config, strain_loss, stress_loss, energy_loss, resid_loss, stressdiv_loss
@@ -333,6 +378,7 @@ def valid_pass(model, epoch, valid_loader):
 
         losses_e, _ = compute_losses(
             model,
+            micros,
             (strain_pred, stress_pred, energy_pred),
             (strain_true, stress_true, energy_true),
             resid,
@@ -416,7 +462,7 @@ def train_model(model, config, train_loader, valid_loader):
     model = model.to(config.device)  # move to GPU
 
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=config.lr_init, weight_decay=config.weight_decay
+        model.parameters(), lr=config.lr_max, weight_decay=config.weight_decay
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, config.num_epochs, eta_min=1e-8
@@ -473,6 +519,7 @@ def train_model(model, config, train_loader, valid_loader):
             # now compute losses
             losses_e, total_loss = compute_losses(
                 model,
+                micros,
                 (strain_pred, stress_pred, energy_pred),
                 (strain_true, stress_true, energy_true),
                 resid,

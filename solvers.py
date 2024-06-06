@@ -21,7 +21,6 @@ def make_model(config, input_channels, output_channels):
                 in_channels=input_channels,
                 mid_channels=input_channels,
                 out_channels=input_channels,
-                projection_channels=config.projection_channels,
                 **config.fno_args
             )
         else:
@@ -30,7 +29,6 @@ def make_model(config, input_channels, output_channels):
                 in_channels=input_channels,
                 out_channels=output_channels,
                 mid_channels=config.latent_dim,
-                projection_channels=config.projection_channels,
                 **config.fno_args
             )
     else:

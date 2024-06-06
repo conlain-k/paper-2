@@ -3,6 +3,7 @@ from torch import pi as PI
 import itertools
 
 from helpers import *
+from tensor_ops import *
 
 
 class StrainToStress_2phase(torch.nn.Module):
@@ -187,7 +188,7 @@ def VMStress(stress):
 
 
 def stressdeviator(stress):
-    stress_mat = vec_to_mat(stress)
+    stress_mat = mandel_to_mat_3x3(stress)
     trace = stress_mat[:, 0, 0] + stress_mat[:, 1, 1] + stress_mat[:, 2, 2]
     stress_dev_mat = stress_mat
 
@@ -279,9 +280,8 @@ def est_homog(strain, stress, inds):
 
 def stressdiv(stress, use_FFT_deriv=True):
 
-    stress_mat = vec_to_mat(stress)
+    stress_mat = mandel_to_mat_3x3(stress)
 
-    # print(stress_mat.shape)
     # compute average stress divergence for a given stress field using either Fourier derivatives or finite differences
     if use_FFT_deriv:
         [dx, dy, dz] = batched_vector_FFT_grad(stress_mat, disc=True)

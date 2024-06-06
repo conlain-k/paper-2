@@ -5,7 +5,7 @@ import fourier_conv
 from torch.nn.utils.parametrizations import weight_norm
 
 from layers import ProjectionBlock, get_activ
-from helpers import *
+from helpers import print_activ_map
 
 
 class FNO(torch.nn.Module):
@@ -27,6 +27,7 @@ class FNO(torch.nn.Module):
         super().__init__()
         # lifting and projection blocks
         self.lift = torch.nn.Conv3d(in_channels, mid_channels, kernel_size=1, bias=True)
+
         self.proj = ProjectionBlock(
             mid_channels,
             out_channels,
@@ -128,8 +129,8 @@ class FNO_Block(torch.nn.Module):
 
         if normalize:
             # group size = 1 (a.k.a. easy layernorm)
-            self.norm = torch.nn.GroupNorm(1, mid_channels)
-            # self.norm = torch.nn.GroupNorm(1, mid_channels, affine=False)
+            # self.norm = torch.nn.GroupNorm(1, mid_channels)
+            self.norm = torch.nn.GroupNorm(1, mid_channels, affine=False)
             # self.norm = torch.nn.InstanceNorm3d(mid_channels)
 
         # add another local FC layer before activation
@@ -146,19 +147,15 @@ class FNO_Block(torch.nn.Module):
 
     # just the middle bit of an FNO
     def forward(self, x, injection=0):
+        # residual outside normalization
         if self.resid_conn:
             x0 = x
-        # residual after normalization
-        if self.normalize:
-            x = self.norm(x)
 
-        x1 = self.conv(x)
-        x2 = self.filt(x)
-        # now apply activation
-        x = self.activ(x1 + x2)
+        x = self.norm(x) if self.normalize else x
+        x = self.activ(self.conv(x) + self.filt(x))
 
         if self.resid_conn:
             # residual connection
-            x += x0
+            x = x + x0
 
         return x

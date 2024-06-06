@@ -23,7 +23,7 @@ class LocalizationDataset(Dataset):
         self.stress = None
 
         self.length = self.getdata(self.mf, dataset_name="micros").shape[0]
-        # self.length = 128
+        # self.length = 256
 
     def getdata(self, filename, dataset_name=None, opt=None):
         """Actually load data from h5 or numpy file"""
