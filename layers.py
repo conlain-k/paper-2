@@ -8,6 +8,8 @@ def get_activ(activ_type, num_chan):
         activ = torch.nn.GELU()
     elif activ_type == "relu":
         activ = torch.nn.ReLU()
+    elif activ_type == "softplus":
+        activ = torch.nn.Softplus()
     else:
         activ = torch.nn.PReLU(num_parameters=num_chan)
 
@@ -329,24 +331,33 @@ class ProjectionBlock(torch.nn.Module):
         activ_type="gelu",
         use_weight_norm=False,
         final_bias=False,
+        normalize=False,
     ):
         super().__init__()
         # put larger dimension through the activation
         hidden_channels = hidden_channels or max(in_channels, out_channels)
 
-        self.lift_op = torch.nn.Conv3d(in_channels, hidden_channels, kernel_size=1)
-
-        self.activ = get_activ(activ_type, hidden_channels)
-
-        self.filt_op = torch.nn.Conv3d(
+        self.proj_1 = torch.nn.Conv3d(in_channels, hidden_channels, kernel_size=1)
+        self.proj_2 = torch.nn.Conv3d(
             hidden_channels, out_channels, kernel_size=1, bias=final_bias
         )
+
+        self.activ_1 = get_activ(activ_type, hidden_channels)
+        self.normalize = normalize
+
+        # # set up normalization
+        # if normalize:
+        #     self.norm = torch.nn.InstanceNorm3d(in_channels)
+
         if use_weight_norm:
-            self.lift_op = weight_norm(self.lift_op)
-            self.filt_op = weight_norm(self.filt_op)
+            self.proj_1 = weight_norm(self.proj_1)
+            self.proj_2 = weight_norm(self.proj_2)
 
     def forward(self, x):
-        x = self.lift_op(x)
-        x = self.activ(x)
-        x = self.filt_op(x)
+
+        x = self.proj_1(x)
+        x = self.activ_1(x)
+
+        x = self.proj_2(x)
+
         return x

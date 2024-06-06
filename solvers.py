@@ -5,7 +5,7 @@ from constlaw import (
     central_diff_3d,
 )
 from greens_op import GreensOp
-from fno import FNO, FNO_Middle
+from fno import *
 from layers import SimpleLayerNet, TinyVNet, ProjectionBlock
 import torch
 from torchdeq import get_deq, mem_gc
@@ -70,7 +70,8 @@ class LocalizerBase(torch.nn.Module):
         self.constlaw = StrainToStress_2phase(E_vals, nu_vals)
         self.eps_bar = torch.as_tensor(eps_bar)
 
-        self.greens_op = GreensOp(self.constlaw, self.config.num_voxels)
+        if self.config.use_deq:
+            self.greens_op = GreensOp(self.constlaw, self.config.num_voxels)
 
         # take frob norm of a given quantity
         frob = lambda x: (x**2).sum().sqrt()
@@ -92,12 +93,7 @@ class LocalizerBase(torch.nn.Module):
 
     def enforce_zero_mean(self, x):
         # remove the average value from a field (for each instance, channel)
-        xmean = x.mean(dim=(-3, -2, -1), keepdim=True)
-        xp = x - xmean
-        # print("mean", xmean[0].mean(dim=(-3, -2, -1)))
-        # print("X", x[0].mean(dim=(-3, -2, -1)))
-        # print("xp", xp[0].mean(dim=(-3, -2, -1)))
-        return xp
+        return x - x.mean(dim=(-3, -2, -1), keepdim=True)
 
     def green_iter(self, m, strain):
         eps = self.greens_op(strain, m)
@@ -245,7 +241,7 @@ class Localizer_DEQ(LocalizerBase):
         if self.config.use_skip_update:
             strain_kp += strain_k
 
-        self.filter_result(strain_kp)
+        strain_kp = self.filter_result(strain_kp)
 
         return strain_kp
 

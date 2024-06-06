@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import AxesGrid
 
 FIELD_IND = 0
+PLOT_IND = 1744
 
 
 def PRMS_loss(y_true, y_pred, scale=None):
@@ -52,9 +53,20 @@ def H1_loss(y_true, y_pred, scale=None, deriv_scale=10):
     return L2_loss + diff_loss
 
 
-def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst):
-    print(f"Saving fig for epoch {epoch}, min ind is {ind_worst}")
-    assert ind_worst is not None
+def plot_worst(epoch, model, micro, strain_true):
+    print(f"Saving fig for epoch {epoch}")
+
+    micro = micro.to(model.config.device)
+    strain_true = strain_true.to(model.config.device)
+
+    with torch.inference_mode():
+        output = model(micro)
+
+    if model.config.return_resid and model.config.use_deq:
+        (strain_pred, _) = output
+    else:
+        strain_pred = output
+        _ = 0 * strain_pred
 
     # recompute quantities
     stress_pred, stress_polar_pred, energy_pred = compute_quants(
@@ -80,8 +92,18 @@ def plot_worst(epoch, model, micro, strain_true, strain_pred, ind_worst):
     print(
         f"pred: min {stressdiv_pred.min()}, max {stressdiv_pred.max()}, mean {stressdiv_pred.mean()}, std {stressdiv_pred.std()}"
     )
+
+    # get worst L1 error
+    ind_max = (
+        torch.argmax((strain_true - strain_pred)[:, FIELD_IND].abs().max())
+        .detach()
+        .cpu()
+    )
+
+    ind_max = unravel_index(ind_max, strain_true[:, FIELD_IND].detach().cpu().shape)
+
     # Plot z=const slice
-    sind = s_[:, :, ind_worst[-1]]
+    sind = s_[:, :, ind_max[-1]]
 
     plot_pred(
         epoch,
@@ -309,18 +331,6 @@ def valid_pass(model, epoch, valid_loader):
         # get index for each dimension
         ind_max = unravel_index(ind_max, strain_true[:, FIELD_IND].detach().cpu().shape)
 
-        diff = (strain_true - strain_pred)[:, FIELD_IND][ind_max].abs()
-
-        # just show last batch
-        if True:  # diff > diff_worst:
-            # location of worst in batch
-            b_ind = ind_max[0]
-            micro_worst = micros[b_ind : b_ind + 1].detach()
-            strain_true_worst = strain_true[b_ind : b_ind + 1].detach()
-            strain_pred_worst = strain_pred[b_ind : b_ind + 1].detach()
-            diff_worst = diff.detach()
-            ind_worst = ind_max[1:]
-
         losses_e, _ = compute_losses(
             model,
             (strain_pred, stress_pred, energy_pred),
@@ -334,11 +344,6 @@ def valid_pass(model, epoch, valid_loader):
         homog_err += (C11_true - C11_pred).abs().sum()
 
         mean_homog += C11_true.sum()
-
-        # print("C11_true", C11_true)
-        # print("C11_pred", C11_pred)
-
-        # print(losses_e)
 
         # accumulate loss
         running_loss = running_loss + losses_e
@@ -366,9 +371,14 @@ def valid_pass(model, epoch, valid_loader):
     # divide out number of batches (simple normalization)
     running_loss /= len(valid_loader)
 
+    m, e_true, _ = valid_loader.dataset[PLOT_IND : PLOT_IND + 1]
+
     # now valid loop is done
     plot_worst(
-        epoch, model, micro_worst, strain_true_worst, strain_pred_worst, ind_worst
+        epoch,
+        model,
+        m,
+        e_true,
     )
 
     # print("last batch vm metrics")
@@ -442,6 +452,8 @@ def train_model(model, config, train_loader, valid_loader):
             micros = micros.to(config.device)
             # only predict first component
             strain_true = strain_true.to(config.device)
+
+            optimizer.zero_grad()
 
             output = model(micros)
 

@@ -35,8 +35,8 @@ datasets = {
 # coefficients for balancing loss functions
 lam_strain = 1
 lam_stress = 1
-lam_energy = 0.1
-lam_stressdiv = 0.1
+lam_energy = 0
+# lam_stressdiv = 0.1
 lam_stressdiv = 0
 
 lam_sum = lam_strain + lam_stress + lam_energy + lam_stressdiv
