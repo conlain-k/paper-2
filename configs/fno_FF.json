@@ -17,12 +17,12 @@
         ],
         "normalize": true,
         "activ_type": "gelu",
-        "init_weight_scale": 0.1,
-        "use_weight_norm": true,
-        "use_fourier_bias": true,
+        "init_weight_scale": 0.01,
+        "use_weight_norm": false,
+        "use_fourier_bias": false,
         "resid_conn": true,
         "projection_channels": 128
     },
-    "latent_dim": 32,
-    "lr_max": 1e-3
+    "latent_dim": 24,
+    "lr_max": 5e-4
 }
