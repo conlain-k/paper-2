@@ -91,7 +91,7 @@ class LocalizerBase(torch.nn.Module):
 
     def enforce_zero_mean(self, x):
         # remove the average value from a field (for each instance, channel)
-        return x - x.mean(dim=(-3, -2, -1), keepdim=True)
+        return x - x.detach().mean(dim=(-3, -2, -1), keepdim=True)
 
     def green_iter(self, m, strain):
         eps = self.greens_op(strain, m)

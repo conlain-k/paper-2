@@ -20,20 +20,21 @@ class FNO(torch.nn.Module):
         activ_type="gelu",
         use_weight_norm=False,
         modes=(10, 10),
-        use_MLP=False,
-        use_injection=False,
         **kwargs,
     ):
         super().__init__()
         # lifting and projection blocks
-        self.lift = torch.nn.Conv3d(in_channels, mid_channels, kernel_size=1, bias=True)
+        self.lift = torch.nn.Conv3d(in_channels, mid_channels, kernel_size=1)
+
+        if use_weight_norm:
+            self.lift = weight_norm(self.lift)
 
         self.proj = ProjectionBlock(
             mid_channels,
             out_channels,
             hidden_channels=final_projection_channels,
             activ_type=activ_type,
-            use_weight_norm=False,
+            use_weight_norm=use_weight_norm,
             final_bias=False,
         )
 
@@ -45,23 +46,12 @@ class FNO(torch.nn.Module):
                     use_weight_norm=use_weight_norm,
                     mid_channels=mid_channels,
                     num_modes=mm,
-                    use_MLP=use_MLP,
                     **kwargs,
                 )
             )
 
         self.blocks = torch.nn.ModuleList(blocks)
 
-        self.use_injection = use_injection
-
-        # if normalize:
-        # group size = 1 (a.k.a. easy layernorm)
-        # self.norm = torch.nn.GroupNorm(1, mid_channels)
-        # self.norm = torch.nn.GroupNorm(1, mid_channels, affine=False)
-        # normalize all inputs channel-wise to fix contrast issues, etc.
-        # self.input_norm = torch.nn.InstanceNorm3d(
-        #     in_channels, track_running_stats=False, affine=False
-        # )
         self.input_norm = torch.nn.GroupNorm(1, in_channels)
 
     def forward(self, x):
@@ -69,21 +59,12 @@ class FNO(torch.nn.Module):
         x = self.input_norm(x)
         x = self.lift(x)
 
-        if self.use_injection:
-            inj = x
-        else:
-            # don't add anything
-            inj = 0.0
-
         for block in self.blocks:
             # apply FNO blocks sequentially
-            x = block(x, inj)
+            x = block(x)
 
-        # also normalize output of FNO chain
-        # x = self.input_norm(x)
         # now do two projection steps, with an activation in the middle
-        x = self.proj(x) * 2.0
-
+        x = self.proj(x)
         return x
 
 
@@ -98,7 +79,6 @@ class FNO_Block(torch.nn.Module):
         init_weight_scale,
         use_fourier_bias,
         resid_conn,
-        use_MLP,
         **kwargs,
     ):
         super().__init__()
@@ -130,29 +110,18 @@ class FNO_Block(torch.nn.Module):
         if normalize:
             # group size = 1 (a.k.a. easy layernorm)
             # self.norm = torch.nn.GroupNorm(1, mid_channels)
-            self.norm = torch.nn.GroupNorm(1, mid_channels, affine=False)
+            self.norm = torch.nn.GroupNorm(1, mid_channels)
             # self.norm = torch.nn.InstanceNorm3d(mid_channels)
 
-        # add another local FC layer before activation
-        self.use_MLP = use_MLP
-        if self.use_MLP:
-            self.mlp_layer = ProjectionBlock(
-                mid_channels,
-                mid_channels,
-                activ_type=activ_type,
-                use_weight_norm=use_weight_norm,
-                final_bias=False,
-                normalize=True,
-            )
-
     # just the middle bit of an FNO
-    def forward(self, x, injection=0):
+    def forward(self, x):
         # residual outside normalization
         if self.resid_conn:
             x0 = x
 
         x = self.norm(x) if self.normalize else x
         x = self.activ(self.conv(x) + self.filt(x))
+        # # x1 = self.norm(x1) if self.normalize else x1
 
         if self.resid_conn:
             # residual connection
