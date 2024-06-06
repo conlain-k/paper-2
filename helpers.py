@@ -139,7 +139,7 @@ def load_conf_override(conf_file):
     return conf_args
 
 
-def print_activ_map(x, abs=True):
+def print_activ_map(x):
     with torch.no_grad():
         x = x.detach()
         # print channel-wise power of an intermediate state x, along with line #
@@ -149,17 +149,14 @@ def print_activ_map(x, abs=True):
 
         function_name = inspect.stack()[1].function
 
-        # average out space and batch
-        if abs:
-            x = x**2
-        x_power = x.mean(dim=(-3, -2, -1, 0))
+        xmin = x.min(dim=(-3, -2, -1, 0))
+        xmax = x.max(dim=(-3, -2, -1, 0))
+        xmean = x.mean(dim=(-3, -2, -1, 0))
+        xstd = x.std(dim=(-3, -2, -1, 0))
 
-        if abs:
-            x_power = x_power.sqrt()
-
-        print(f"File {filename}:{line_num} ({function_name}) activ is {x_power}")
-
-        del x_power
+        print(
+            f"File {filename}:{line_num} ({function_name}) min is {xmin}, max is {xmax}, mean is {xmean}, std is {xstd},"
+        )
 
         del x
 

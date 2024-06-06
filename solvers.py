@@ -70,7 +70,8 @@ class LocalizerBase(torch.nn.Module):
 
     def enforce_zero_mean(self, x):
         # remove the average value from a field (for each instance, channel)
-        return x - x.mean(dim=(-3, -2, -1), keepdim=True)
+        # don't add any gradients from this operation (this smooths out gradients too much since every voxel depends equally on every other)
+        return x - x.detach().mean(dim=(-3, -2, -1), keepdim=True)
 
     # def green_iter(self, m, strain):
     #     eps = self.greens_op(strain, m)
@@ -109,7 +110,8 @@ class Localizer_FeedForward(LocalizerBase):
             m = flatten_stiffness(C_field)
 
         x = self.net(m)
-        x = self.filter_result(x) * self.constlaw.strain_scaling
+        x = self.enforce_zero_mean(x) + self.eps_bar.reshape(1, 6, 1, 1, 1)
+        # x = self.filter_result(x) * self.constlaw.strain_scaling
 
         return x
 

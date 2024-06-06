@@ -63,7 +63,7 @@ def compute_energy_loss(e_true, e_pred, C_field, add_deriv=False, ret_deriv=Fals
 
     loss = resid_energy
 
-    print(f"Resid loss is {resid_energy.mean():4f}")
+    # print(f"Resid loss is {resid_energy.mean():4f}")
 
     if add_deriv:
         # take finite differences
@@ -78,7 +78,7 @@ def compute_energy_loss(e_true, e_pred, C_field, add_deriv=False, ret_deriv=Fals
             / 10.0
         )
 
-        print(f"Grad loss is {resid_grad_energy.mean():4f}")
+        # print(f"Grad loss is {resid_grad_energy.mean():4f}")
         loss += resid_grad_energy
 
     if ret_deriv:

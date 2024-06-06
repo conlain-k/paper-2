@@ -40,7 +40,7 @@ class Config:
 
     loader_args: dict = field(
         default_factory=lambda: {
-            DataMode.TRAIN: {"batch_size": 8, "shuffle": True, "num_workers": 1},
+            DataMode.TRAIN: {"batch_size": 16, "shuffle": True, "num_workers": 1},
             DataMode.VALID: {"batch_size": 256, "shuffle": False, "num_workers": 1},
             DataMode.TEST: {"batch_size": 256, "shuffle": False, "num_workers": 1},
         }
@@ -98,7 +98,7 @@ class Config:
     # output_displacement: bool = False
     compute_compat_err: bool = True
 
-    grad_clip_mag: float = 1
+    grad_clip_mag: float = 10
     use_skip_update: bool = False
     enforce_mean: bool = True
 
