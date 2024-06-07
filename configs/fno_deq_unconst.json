@@ -1,13 +1,13 @@
 {
-    "_description": "Feed-forward FNO solver",
+    "_description": "DEQ FNO solver",
     "_parent": "configs/fno_main.json",
-    "use_deq": false,
-    "use_micro": true,
-    "use_strain": false,
-    "use_bc_strain": false,
-    "use_stress": false,
-    "use_stress_polarization": false,
-    "use_energy": false,
+    "use_deq": true,
+    "use_micro": false,
+    "use_strain": true,
+    "use_bc_strain": true,
+    "use_stress": true,
+    "use_stress_polarization": true,
+    "use_energy": true,
     "add_Green_iter": false,
     "enforce_mean": false,
     "fno_args": {
@@ -24,5 +24,8 @@
         "projection_channels": 128
     },
     "latent_dim": 24,
-    "lr_max": 5e-4
+    "use_skip_update": false,
+    "lr_max": 1e-4,
+    "num_epochs": 200,
+    "H1_deriv_scaling": 31
 }
