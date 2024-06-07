@@ -10,6 +10,7 @@
     "use_energy": true,
     "add_Green_iter": false,
     "enforce_mean": true,
+    "add_bcs_to_iter": true,
     "fno_args": {
         "modes": [
             16,
@@ -17,9 +18,8 @@
         ],
         "normalize": true,
         "activ_type": "gelu",
-        "init_weight_scale": 0.01,
-        "use_weight_norm": true,
-        "use_fourier_bias": true,
+        "init_weight_scale": 0.1,
+        "use_weight_norm": false,
         "resid_conn": true,
         "projection_channels": 128
     },

@@ -10,7 +10,6 @@
         "activ_type": "gelu",
         "init_weight_scale": 0.01,
         "use_weight_norm": false,
-        "use_fourier_bias": false,
         "resid_conn": true,
         "projection_channels": 128
     }

@@ -77,7 +77,6 @@ class FNO_Block(torch.nn.Module):
         num_modes,
         normalize,
         init_weight_scale,
-        use_fourier_bias,
         resid_conn,
         **kwargs,
     ):
@@ -94,7 +93,6 @@ class FNO_Block(torch.nn.Module):
             num_modes,
             num_modes,
             scale_fac=init_weight_scale,
-            use_bias=use_fourier_bias,
         )
 
         # local channel-wise filter

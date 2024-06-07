@@ -158,8 +158,8 @@ def plot_worst(epoch, model, micro, strain_true):
     plot_pred(
         epoch,
         micro[0, 0][sind],
-        0 * resid[0, FIELD_IND][sind] / model.strain_scaling,
-        resid[0, FIELD_IND][sind] / model.strain_scaling,
+        strain_pred[0, FIELD_IND][sind] / model.strain_scaling,
+        (strain_pred + resid)[0, FIELD_IND][sind] / model.strain_scaling,
         "resid",
         model.config.image_dir,
     )
@@ -318,15 +318,21 @@ def compute_losses(model, micros, quants_pred, quants_true, resid):
     #     deriv_scale=model.config.H1_deriv_scaling,
     # )
 
-    energy_loss = compute_energy_loss(
-        model, strain_true, strain_pred, micros, add_deriv=True
-    ).mean()
+    energy_loss = (
+        compute_energy_loss(
+            model, strain_true, strain_pred, micros, add_deriv=True
+        ).mean()
+        / model.energy_scaling
+    )
 
     resid_loss = torch.tensor(0.0)
     stressdiv_loss = torch.tensor(0.0)
 
     if model.config.return_resid and not model.pretraining:
-        resid_loss = compute_energy_loss(model, resid, 0.0, micros, add_deriv=False)
+        resid_loss = (
+            compute_energy_loss(model, resid, 0.0, micros, add_deriv=False).mean()
+            / model.energy_scaling
+        )
 
     # if model.config.compute_stressdiv:
     #     stressdiv_loss = (
@@ -485,11 +491,14 @@ def train_model(model, config, train_loader, valid_loader):
         if e >= config.num_pretrain_epochs and model.pretraining:
             print(f"\nDisabling pretrain mode at epoch {e}\n")
             model.pretraining = False
-            # also rebuild optimizer to reset internal states
+            # also rebuild optimizer to reset internal states / momentum
             optimizer = torch.optim.Adam(
                 model.parameters(),
                 lr=optimizer.param_groups[0]["lr"],
                 weight_decay=config.weight_decay,
+            )
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, config.num_epochs, eta_min=1e-8
             )
 
         print(DELIM)

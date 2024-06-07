@@ -17,9 +17,8 @@
         ],
         "normalize": true,
         "activ_type": "gelu",
-        "init_weight_scale": 2,
+        "init_weight_scale": 0.1,
         "use_weight_norm": true,
-        "use_fourier_bias": false,
         "resid_conn": true,
         "projection_channels": 128
     },

@@ -21,7 +21,7 @@ lam_stress = lam_stress / lam_sum
 lam_energy = lam_energy / lam_sum
 
 # residual error is usually small anyways, and we want our DEQ gradients to be accurate
-lam_resid = 1
+lam_resid = 100
 
 
 @dataclass
@@ -56,8 +56,8 @@ class Config:
         default_factory=lambda: {
             "f_solver": "anderson",
             "b_solver": "anderson",
-            "f_max_iter": 16,
-            "b_max_iter": 16,
+            "f_max_iter": 8,
+            "b_max_iter": 8,
             "f_tol": 1e-4,
             "b_tol": 1e-5,
             "use_ift": True,
@@ -103,6 +103,7 @@ class Config:
     grad_clip_mag: float = 10
     use_skip_update: bool = False
     enforce_mean: bool = True
+    add_bcs_to_iter: bool = True
 
     use_EMA: bool = False
 

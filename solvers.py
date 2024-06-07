@@ -95,7 +95,7 @@ class LocalizerBase(torch.nn.Module):
 
     def enforce_zero_mean(self, x):
         # remove the average value from a field (for each instance, channel)
-        return x - x.detach().mean(dim=(-3, -2, -1), keepdim=True)
+        return x - x.mean(dim=(-3, -2, -1), keepdim=True)
 
     def green_iter(self, m, strain):
         eps = self.greens_op(strain, m)
@@ -109,9 +109,12 @@ class LocalizerBase(torch.nn.Module):
 
         if self.config.enforce_mean:
             x = self.enforce_zero_mean(x)
+            # print_activ_map(x)
 
-        # either way, add mean strain as correction
-        x += self.eps_bar.reshape(1, 6, 1, 1, 1)
+        if self.config.add_bcs_to_iter:
+            # either way, add mean strain as correction
+            x += self.eps_bar.reshape(1, 6, 1, 1, 1)
+            # print_activ_map(x)
 
         return x
 
@@ -240,16 +243,17 @@ class Localizer_DEQ(LocalizerBase):
 
         # return init_strain
 
+        # print_activ_map(strain_k)
         z_k = self.encode_micro_strain(strain_k, m)
-
+        # print_activ_map(z_k)
         # predict new strain perturbation
-        strain_kp = self.forward_net(z_k) * self.strain_scaling
-
+        strain_kp = self.forward_net(z_k)  # * self.strain_scaling
+        # print_activ_map(strain_kp)
         if self.config.use_skip_update:
             strain_kp += strain_k
 
-        # strain_kp = self.filter_result(strain_kp)
-
+        strain_kp = self.filter_result(strain_kp)
+        # print_activ_map(strain_kp)
         return strain_kp
 
     def forward(self, m):
