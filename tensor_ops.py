@@ -131,8 +131,11 @@ def cubic_mandel66(C11, C12, C44):
         new_mat[row, row] = C11
 
     for row in range(3, 6):
-        # set up last three diagonals, scaled by mandel factor
+        # set up last three diagonals
+        # do not scale by mandel factor!!! for some reason this breaks things / makes the shear terms wrong
         new_mat[row, row] = C44 * 2
+
+    # print(new_mat)
 
     return new_mat
 

@@ -125,11 +125,11 @@ class Localizer_FeedForward(LocalizerBase):
         if self.config.enforce_mean:
             x = self.enforce_zero_mean(x)
 
-        if self.config.add_bcs_to_iter:
-            x += self.eps_bar.reshape(1, 6, 1, 1, 1)
-
         if self.config.scale_output:
             x *= self.constlaw.strain_scaling
+
+        if self.config.add_bcs_to_iter:
+            x += self.eps_bar.reshape(1, 6, 1, 1, 1)
 
         return x
 

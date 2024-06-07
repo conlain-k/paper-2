@@ -1,3 +1,5 @@
+from numpy import s_, unravel_index
+
 import torch
 import json
 import os
@@ -256,3 +258,66 @@ def plot_pred(epoch, micro, y_true, y_pred, field_name, image_dir):
     plt.savefig(f"{image_dir}/epoch_{epoch}_{field_name}.png", dpi=300)
 
     plt.close(fig)
+
+
+def check_constlaw(constlaw, micro, strain, stress):
+    # Check that our constlaw gives same stress-strain relation as FEA
+
+    C_field = constlaw.compute_C_field(micro)
+
+    stress_comp = constlaw(strain, C_field)
+
+    err = (stress_comp - stress).abs()
+
+    ind_max = torch.argmax(err).detach().cpu()
+
+    ind_max = unravel_index(ind_max, err.shape)
+
+    print(ind_max)
+
+    b, c, x, y, z = ind_max
+
+    print("Worst ind is", ind_max)
+
+    # Plot z=const slice
+    sind = s_[:, :, z]
+
+    print(f"Err mean {err.mean()} std {err.std()} min {err.min()} max {err.max()}")
+
+    print(f"Each component err mean is: {err.mean(dim=(0, -1, -2, -3))}")
+
+    plot_pred(
+        -1,
+        micro[b, 1][sind],
+        stress[b, c][sind],
+        stress_comp[b, c][sind],
+        "stresscomp",
+        "images/",
+    )
+
+    plot_pred(
+        -1,
+        micro[b, 1][sind],
+        0 * err[b, c][sind],
+        err[b, c][sind],
+        "err_stresscompx",
+        "images/",
+    )
+    plot_pred(
+        -1,
+        micro[b, 1][sind],
+        0 * strain[b, c][sind],
+        strain[b, c][sind],
+        "straincomp",
+        "images/",
+    )
+
+    assert torch.allclose(stress_comp, stress, rtol=1e-8, atol=1e-5)
+
+
+def compute_quants(model, strain, C_field):
+    stress = model.constlaw(strain, C_field)
+    stress_polar = model.constlaw.stress_pol(strain, C_field)
+    energy = compute_strain_energy(strain, stress)
+
+    return stress, stress_polar, energy

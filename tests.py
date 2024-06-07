@@ -83,6 +83,25 @@ def test_mat_vec_op():
     torch.testing.assert_close(mat, mat2)
 
 
+def test_constlaw():
+    CR_str = "100.0"
+    m_base = "paper2_smooth"
+
+    datasets, CR = collect_datasets("paper2_smooth", 100.0)
+    dataset = LocalizationDataset(**datasets[DataMode.TRAIN])
+
+    E_VALS = [120.0, CR * 120.0]
+    NU_VALS = [0.3, 0.3]
+
+    print(E_VALS, NU_VALS)
+
+    constlaw = StrainToStress_2phase(E_VALS, NU_VALS)
+
+    inds = [0, 5, 120, 690, 1111]
+    micro, strain, stress = dataset[inds]
+    check_constlaw(constlaw, micro, strain, stress)
+
+
 def test_fft_deriv():
     KMAX = 4
 
@@ -754,18 +773,19 @@ def test_deq_convergence():
     plt.savefig("conv_trace.png", dpi=300)
 
 
-test_euler_pred()
-test_deq_convergence()
 # test_FFT_iters_2phase()
 
 
 # test_FFT_iters_crystal()
-# test_stiff_ref()
-# test_mandel()
-# test_rotat()
+test_constlaw()
+test_stiff_ref()
+test_mandel()
+test_rotat()
+test_mat_vec_op()
 
 
+# test_euler_pred()
+# test_deq_convergence()
 # test_euler_ang()
 # prof_C_op()
-# test_mat_vec_op()
 # test_fft_deriv()

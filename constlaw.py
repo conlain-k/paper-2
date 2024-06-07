@@ -370,3 +370,12 @@ def weighted_norm(field, weight_mat, average):
         res = res.mean(dim=(-3, -2, -1))
 
     return res
+
+
+def compute_quants(model, strain, C_field):
+    # handy helper to compute multiple thermodynamic quantities at once
+    stress = model.constlaw(strain, C_field)
+    stress_polar = model.constlaw.stress_pol(strain, C_field)
+    energy = compute_strain_energy(strain, stress)
+
+    return stress, stress_polar, energy

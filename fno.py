@@ -108,7 +108,7 @@ class FNO_Block(torch.nn.Module):
         self.activ = get_activ(activ_type, mid_channels)
 
         if normalize:
-            self.norm = torch.nn.GroupNorm(1, mid_channels, affine=True)
+            self.norm = torch.nn.GroupNorm(1, mid_channels)
 
     # just the middle bit of an FNO
     def forward(self, x):
