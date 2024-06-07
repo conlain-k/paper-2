@@ -63,6 +63,10 @@ class LocalizerBase(torch.nn.Module):
         # cache config
         self.config = config
 
+        # if in pretraining mode, don't perform certain normalizations
+        # this allows us to enforce constraints (e.g. average mean) without messing up early training
+        self.pretraining = True
+
     def setConstParams(self, E_vals, nu_vals, eps_bar):
         # set up constitutive model
         self.constlaw = StrainToStress_2phase(E_vals, nu_vals)
@@ -98,6 +102,11 @@ class LocalizerBase(torch.nn.Module):
         return eps
 
     def filter_result(self, x):
+
+        # no filter in pretraining
+        if self.pretraining:
+            return x
+
         if self.config.enforce_mean:
             x = self.enforce_zero_mean(x)
 
@@ -119,7 +128,7 @@ class Localizer_FeedForward(LocalizerBase):
 
     def forward(self, m):
 
-        x = self.net(m)
+        x = self.net(m)  # * self.strain_scaling
         x = self.filter_result(x)
 
         return x
@@ -239,51 +248,15 @@ class Localizer_DEQ(LocalizerBase):
         if self.config.use_skip_update:
             strain_kp += strain_k
 
-        strain_kp = self.filter_result(strain_kp)
+        # strain_kp = self.filter_result(strain_kp)
 
         return strain_kp
-
-    def single_iter_fancy(self, m, eh_k):
-
-        # print("iter")
-        # print(m.shape)
-        # print(h_k.shape)
-        # print(torch.cuda.memory_summary())
-
-        # Split off current strain and encode into features
-        strain_k, h_k = eh_k[:, :6], eh_k[:, 6:]
-
-        # print("Init energy", (strain_k**2).mean().sqrt(), (h_k**2).mean().sqrt())
-
-        # don't differentiate through this projection as input to model (only during output)
-        strain_k = strain_k.detach()
-
-        # Now get micro features
-        z_k = self.encode_micro_strain(strain_k, m)
-
-        # Combine information
-
-        FNO_input = self.lift_h(h_k) + self.lift_z(z_k)
-
-        # now apply model
-        FNO_output = self.forward_net(FNO_input)
-
-        h_kp = self.proj_h(FNO_output)
-
-        strain_kp = self.proj_eps(FNO_output) * self.strain_scaling
-
-        strain_kp = self.filter_result(strain_kp)
-
-        # print("Final energy", (strain_kp**2).mean().sqrt(), (h_kp**2).mean().sqrt())
-
-        eh_kp = torch.concatenate([strain_kp, h_kp], dim=1)
-
-        return eh_kp
 
     def forward(self, m):
         # build up shape of latent dim based on micro
         h_shape = list(m.shape)
         # eps should be b * 6 * xyz (since 6 indep strain components)
+
         if self.config.use_fancy_iter:
             h_shape[1] = self.config.latent_dim
             F = lambda h: self.single_iter_fancy(m, h)
@@ -299,13 +272,18 @@ class Localizer_DEQ(LocalizerBase):
             h0 = self.compute_init_strain(m, None)
             # h_shape[1] = 6 # done automatically
 
-        # solve FP over h system
-        sol, _ = self.deq(
-            F,
-            h0,
-        )
-        # print(info)
-        hstar = sol[-1]
+        if self.pretraining:
+            # just do 1 pass in pretrain mode (to quickly get main features)
+            hstar = F(h0)
+        else:
+            # solve FP over h system
+            sol, _ = self.deq(
+                F,
+                h0,
+            )
+
+            # print(info)
+            hstar = sol[-1]
 
         if self.config.use_fancy_iter:
             # only project out strain if needed

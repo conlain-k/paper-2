@@ -6,9 +6,9 @@ import os
 DELIM = "-" * 40
 
 # coefficients for balancing loss functions
-lam_strain = 1
-lam_stress = 1
-lam_energy = 0
+lam_strain = 0
+lam_stress = 0
+lam_energy = 1
 
 
 # penalize compatibility error heavily
@@ -21,7 +21,7 @@ lam_stress = lam_stress / lam_sum
 lam_energy = lam_energy / lam_sum
 
 # residual error is usually small anyways, and we want our DEQ gradients to be accurate
-lam_resid = 100
+lam_resid = 1
 
 
 @dataclass
@@ -49,6 +49,8 @@ class Config:
     # Should we use a fixed maximum # iters, or randomize over training
     deq_randomize_max: bool = True
     deq_min_iter: int = 5
+
+    num_pretrain_epochs = 0
 
     deq_args: dict = field(
         default_factory=lambda: {

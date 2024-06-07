@@ -104,10 +104,10 @@ def plot_worst(epoch, model, micro, strain_true):
         output = model(micro)
 
     if model.config.return_resid and model.config.use_deq:
-        (strain_pred, _) = output
+        (strain_pred, resid) = output
     else:
         strain_pred = output
-        _ = 0 * strain_pred
+        resid = 0 * strain_pred
 
     # recompute quantities
     stress_pred, stress_polar_pred, energy_pred = compute_quants(
@@ -154,6 +154,16 @@ def plot_worst(epoch, model, micro, strain_true):
         "strain",
         model.config.image_dir,
     )
+
+    plot_pred(
+        epoch,
+        micro[0, 0][sind],
+        0 * resid[0, FIELD_IND][sind] / model.strain_scaling,
+        resid[0, FIELD_IND][sind] / model.strain_scaling,
+        "resid",
+        model.config.image_dir,
+    )
+
     plot_pred(
         epoch,
         micro[0, 0][sind],
@@ -315,8 +325,8 @@ def compute_losses(model, micros, quants_pred, quants_true, resid):
     resid_loss = torch.tensor(0.0)
     stressdiv_loss = torch.tensor(0.0)
 
-    if model.config.return_resid:
-        resid_loss = 100 * (resid**2).mean().sqrt() / model.strain_scaling
+    if model.config.return_resid and not model.pretraining:
+        resid_loss = compute_energy_loss(model, resid, 0.0, micros, add_deriv=False)
 
     # if model.config.compute_stressdiv:
     #     stressdiv_loss = (
@@ -461,7 +471,7 @@ def valid_pass(model, epoch, valid_loader):
 def train_model(model, config, train_loader, valid_loader):
     model = model.to(config.device)  # move to GPU
 
-    optimizer = torch.optim.AdamW(
+    optimizer = torch.optim.Adam(
         model.parameters(), lr=config.lr_max, weight_decay=config.weight_decay
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -471,6 +481,17 @@ def train_model(model, config, train_loader, valid_loader):
     print(model.strain_scaling, model.stress_scaling, model.energy_scaling)
 
     for e in range(config.num_epochs):
+        # only pretrain for given # epochs
+        if e >= config.num_pretrain_epochs and model.pretraining:
+            print(f"\nDisabling pretrain mode at epoch {e}\n")
+            model.pretraining = False
+            # also rebuild optimizer to reset internal states
+            optimizer = torch.optim.Adam(
+                model.parameters(),
+                lr=optimizer.param_groups[0]["lr"],
+                weight_decay=config.weight_decay,
+            )
+
         print(DELIM)
 
         # Run a validation pass before training this epoch

@@ -9,7 +9,7 @@
     "use_stress_polarization": false,
     "use_energy": false,
     "add_Green_iter": false,
-    "enforce_mean": false,
+    "enforce_mean": true,
     "fno_args": {
         "modes": [
             16,
@@ -17,9 +17,9 @@
         ],
         "normalize": true,
         "activ_type": "gelu",
-        "init_weight_scale": 0.01,
+        "init_weight_scale": 2,
         "use_weight_norm": true,
-        "use_fourier_bias": true,
+        "use_fourier_bias": false,
         "resid_conn": true,
         "projection_channels": 128
     },
