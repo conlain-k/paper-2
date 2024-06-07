@@ -26,15 +26,15 @@ class FNO(torch.nn.Module):
         # lifting and projection blocks
         self.lift = torch.nn.Conv3d(in_channels, mid_channels, kernel_size=1)
 
-        if use_weight_norm:
-            self.lift = weight_norm(self.lift)
+        # if use_weight_norm:
+        #     self.lift = weight_norm(self.lift)
 
         self.proj = ProjectionBlock(
             mid_channels,
             out_channels,
             hidden_channels=final_projection_channels,
             activ_type=activ_type,
-            use_weight_norm=use_weight_norm,
+            use_weight_norm=False,
             final_bias=False,
         )
 
@@ -63,6 +63,8 @@ class FNO(torch.nn.Module):
             # apply FNO blocks sequentially
             x = block(x)
 
+        # also normalize output of FNO chain
+        # x = self.input_norm(x)
         # now do two projection steps, with an activation in the middle
         x = self.proj(x)
         return x
@@ -77,7 +79,6 @@ class FNO_Block(torch.nn.Module):
         num_modes,
         normalize,
         init_weight_scale,
-        use_fourier_bias,
         resid_conn,
         **kwargs,
     ):
@@ -94,7 +95,6 @@ class FNO_Block(torch.nn.Module):
             num_modes,
             num_modes,
             scale_fac=init_weight_scale,
-            use_bias=use_fourier_bias,
         )
 
         # local channel-wise filter
@@ -108,10 +108,7 @@ class FNO_Block(torch.nn.Module):
         self.activ = get_activ(activ_type, mid_channels)
 
         if normalize:
-            # group size = 1 (a.k.a. easy layernorm)
-            # self.norm = torch.nn.GroupNorm(1, mid_channels)
-            self.norm = torch.nn.GroupNorm(1, mid_channels)
-            # self.norm = torch.nn.InstanceNorm3d(mid_channels)
+            self.norm = torch.nn.GroupNorm(1, mid_channels, affine=True)
 
     # just the middle bit of an FNO
     def forward(self, x):
@@ -121,7 +118,6 @@ class FNO_Block(torch.nn.Module):
 
         x = self.norm(x) if self.normalize else x
         x = self.activ(self.conv(x) + self.filt(x))
-        # # x1 = self.norm(x1) if self.normalize else x1
 
         if self.resid_conn:
             # residual connection

@@ -1,0 +1,6 @@
+{
+    "_description": "DEQ FNO solver",
+    "_parent": "configs/fno_deq.json",
+    "enforce_mean": false,
+    "add_bcs_to_iter": false
+}

@@ -40,7 +40,7 @@ class Config:
 
     loader_args: dict = field(
         default_factory=lambda: {
-            DataMode.TRAIN: {"batch_size": 16, "shuffle": True, "num_workers": 1},
+            DataMode.TRAIN: {"batch_size": 8, "shuffle": True, "num_workers": 1},
             DataMode.VALID: {"batch_size": 256, "shuffle": False, "num_workers": 1},
             DataMode.TEST: {"batch_size": 256, "shuffle": False, "num_workers": 1},
         }
@@ -50,12 +50,14 @@ class Config:
     deq_randomize_max: bool = True
     deq_min_iter: int = 5
 
+    num_pretrain_epochs = 0
+
     deq_args: dict = field(
         default_factory=lambda: {
             "f_solver": "anderson",
             "b_solver": "anderson",
-            "f_max_iter": 16,
-            "b_max_iter": 16,
+            "f_max_iter": 8,
+            "b_max_iter": 8,
             "f_tol": 1e-4,
             "b_tol": 1e-5,
             "use_ift": True,
@@ -101,6 +103,9 @@ class Config:
     grad_clip_mag: float = 10
     use_skip_update: bool = False
     enforce_mean: bool = True
+    add_bcs_to_iter: bool = True
+
+    use_EMA: bool = False
 
     use_EMA: bool = False
 
@@ -114,7 +119,7 @@ class Config:
     # domain length in one direction
     num_voxels: int = 31
 
-    H1_deriv_scaling: float = 1
+    H1_deriv_scaling: float = 0.1
 
     # default to global values, but allow overwrite
     lam_strain: float = lam_strain

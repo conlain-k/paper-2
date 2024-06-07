@@ -25,7 +25,6 @@ class SpectralConv3d(torch.nn.Module):
         modes2,
         modes3,
         scale_fac=1,
-        use_bias=False,
     ):
         super(SpectralConv3d, self).__init__()
 
@@ -52,14 +51,6 @@ class SpectralConv3d(torch.nn.Module):
         )
 
         print(f"Weights shape is {self.weights.shape}")
-
-        if use_bias:
-            # use uniform bias everywhere
-            # self.bias = torch.nn.Parameter(torch.zeros((self.out_channels, 1, 1, 1)))
-            self.bias = torch.nn.Parameter(torch.zeros((self.out_channels,)))
-            print(f"Bias shape is {self.bias.shape}")
-        else:
-            self.bias = None
 
     def get_central_inds(self, size):
         # get a slice corresponding to the center of a volume
@@ -116,9 +107,5 @@ class SpectralConv3d(torch.nn.Module):
 
         # Return to physical space
         out = torch.fft.irfftn(out_ft, s=x.shape[-3:])
-
-        if self.bias is not None:
-            out += self.bias.reshape(1, -1, 1, 1, 1)
-            # print("bias", self.bias)
 
         return out

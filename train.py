@@ -10,6 +10,7 @@ from helpers import *
 from constlaw import *
 
 FIELD_IND = 0
+PLOT_IND = 1744
 
 PLOT_IND = 1744
 
@@ -196,6 +197,16 @@ def plot_worst(epoch, model, micro, strain_true):
     print(
         f"pred: min {compat_err_pred.min()}, max {compat_err_pred.max()}, mean {compat_err_pred.mean()}, std {compat_err_pred.std()}"
     )
+
+    # get worst L1 error
+    ind_max = (
+        torch.argmax((strain_true - strain_pred)[:, FIELD_IND].abs().max())
+        .detach()
+        .cpu()
+    )
+
+    ind_max = unravel_index(ind_max, strain_true[:, FIELD_IND].detach().cpu().shape)
+
     # Plot z=const slice
     sind = s_[:, :, ind_max[-1]]
 
@@ -590,6 +601,8 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
 
     m, e_true, _ = eval_loader.dataset[PLOT_IND : PLOT_IND + 1]
 
+    m, e_true, _ = valid_loader.dataset[PLOT_IND : PLOT_IND + 1]
+
     # now valid loop is done
     plot_worst(
         epoch,
@@ -667,6 +680,20 @@ def train_model(model, config, train_loader, valid_loader):
     )
 
     for e in range(config.num_epochs):
+        # only pretrain for given # epochs
+        if e >= config.num_pretrain_epochs and model.pretraining:
+            print(f"\nDisabling pretrain mode at epoch {e}\n")
+            model.pretraining = False
+            # also rebuild optimizer to reset internal states / momentum
+            optimizer = torch.optim.Adam(
+                model.parameters(),
+                lr=optimizer.param_groups[0]["lr"],
+                weight_decay=config.weight_decay,
+            )
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, config.num_epochs, eta_min=1e-8
+            )
+
         print(DELIM)
 
         # Run a validation pass before training this epoch

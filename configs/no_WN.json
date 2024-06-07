@@ -1,0 +1,16 @@
+{
+    "_description": "Feed-forward FNO solver",
+    "_parent": "configs/new_loss.json",
+    "fno_args": {
+        "modes": [
+            16,
+            16
+        ],
+        "normalize": true,
+        "activ_type": "gelu",
+        "init_weight_scale": 0.01,
+        "use_weight_norm": false,
+        "resid_conn": true,
+        "projection_channels": 128
+    }
+}

@@ -1,6 +1,6 @@
 from constlaw import *
 from greens_op import GreensOp
-from fno import FNO
+from fno import *
 from layers import SimpleLayerNet, TinyVNet, ProjectionBlock
 import torch
 from torchdeq import get_deq, mem_gc
@@ -47,13 +47,17 @@ class LocalizerBase(torch.nn.Module):
         # cache config
         self.config = config
 
+        # if in pretraining mode, don't perform certain normalizations
+        # this allows us to enforce constraints (e.g. average mean) without messing up early training
+        self.pretraining = True
+
     def setConstParams(self, E_vals, nu_vals, eps_bar):
         # set up constitutive model
         self.constlaw = StrainToStress_2phase(E_vals, nu_vals)
         self.eps_bar = torch.as_tensor(eps_bar)
 
-        # if self.config.add_Green_iter:
-        self.greens_op = GreensOp(self.constlaw, self.config.num_voxels)
+        if self.config.use_deq:
+            self.greens_op = GreensOp(self.constlaw, self.config.num_voxels)
 
         # take frob norm of a given quantity
 
@@ -71,19 +75,25 @@ class LocalizerBase(torch.nn.Module):
     def enforce_zero_mean(self, x):
         # remove the average value from a field (for each instance, channel)
         # don't add any gradients from this operation (this smooths out gradients too much since every voxel depends equally on every other)
-        return x - x.detach().mean(dim=(-3, -2, -1), keepdim=True)
+        return x - x.mean(dim=(-3, -2, -1), keepdim=True)
 
     # def green_iter(self, m, strain):
     #     eps = self.greens_op(strain, m)
     #     return eps
 
     def filter_result(self, x):
+        # no filter in pretraining
+        if self.pretraining:
+            return x
 
+        # push mean to equal zero (requires it to be corrected somewhere else)
         if self.config.enforce_mean:
             x = self.enforce_zero_mean(x)
+            # print_activ_map(x)
 
-        # either way, add mean strain as correction
-        x += self.scaled_average_strain
+        # add mean strain as correction
+        if self.config.add_bcs_to_iter:
+            x += self.scaled_average_strain
 
         return x
 
@@ -110,8 +120,10 @@ class Localizer_FeedForward(LocalizerBase):
             m = flatten_stiffness(C_field)
 
         x = self.net(m)
-        x = self.enforce_zero_mean(x) + self.eps_bar.reshape(1, 6, 1, 1, 1)
-        # x = self.filter_result(x) * self.constlaw.strain_scaling
+        x = self.filter_result(x)
+
+        if self.config.scale_output:
+            x *= self.constlaw.strain_scaling
 
         return x
 
@@ -226,8 +238,8 @@ class Localizer_DEQ(LocalizerBase):
         # predict new strain perturbation
         strain_kp = self.forward_net(z_k)
 
-        if self.config.use_skip_update:
-            strain_kp += strain_k
+        # if self.config.use_skip_update:
+        #     strain_kp += strain_k
 
         strain_kp = self.filter_result(strain_kp)
 
@@ -255,23 +267,31 @@ class Localizer_DEQ(LocalizerBase):
         else:
             iter_arg = None
 
-        # solve FP over h system
-        sol, _ = self.deq(F, h0, solver_kwargs=iter_arg)
-        hstar = sol[-1]
+        if self.pretraining:
+            # just do 1 pass in pretrain mode (to quickly get main features)
+            hstar = F(h0)
+        else:
+            # solve FP over h system
+            sol, _ = self.deq(F, h0, solver_kwargs=iter_arg)
+
+            # print(info)
+            hstar = sol[-1]
+
+        out_scale = self.constlaw.strain_scaling if self.config.scale_output else 1
 
         if self.config.use_fancy_iter:
             # only project out strain if needed
-            strain_pred = hstar[:, :6] * self.constlaw.strain_scaling
+            strain_pred = hstar[:, :6] * out_scale
         else:
-            strain_pred = hstar * self.constlaw.strain_scaling
+            strain_pred = hstar * out_scale
 
         if self.config.return_deq_trace:
             # just return raw deq trace without postprocessing
-            return [s * self.constlaw.strain_scaling for s in sol]
+            return [s * out_scale for s in sol]
 
         # return model and residual
         elif self.config.return_resid:
-            resid = (F(hstar) - hstar) * self.constlaw.strain_scaling
+            resid = (F(hstar) - hstar) * out_scale
             return strain_pred, resid
 
         else:
