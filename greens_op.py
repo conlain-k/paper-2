@@ -2,8 +2,9 @@ import torch
 
 import itertools
 from helpers import *
-
+from tensor_ops import *
 from torch import pi as PI
+
 
 class GreensOp(torch.nn.Module):
     def __init__(self, constlaw, N):

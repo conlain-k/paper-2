@@ -239,7 +239,7 @@ class Localizer_DEQ(LocalizerBase):
         if self.config.use_skip_update:
             strain_kp += strain_k
 
-        strain_kp = self.filter_result(strain_kp)
+        # strain_kp = self.filter_result(strain_kp)
 
         return strain_kp
 

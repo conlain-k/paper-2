@@ -82,7 +82,7 @@ class FNO(torch.nn.Module):
         # also normalize output of FNO chain
         # x = self.input_norm(x)
         # now do two projection steps, with an activation in the middle
-        x = self.proj(x) * 2.0
+        x = self.proj(x)
 
         return x
 
@@ -98,7 +98,6 @@ class FNO_Block(torch.nn.Module):
         init_weight_scale,
         use_fourier_bias,
         resid_conn,
-        use_MLP,
         **kwargs,
     ):
         super().__init__()
@@ -128,22 +127,7 @@ class FNO_Block(torch.nn.Module):
         self.activ = get_activ(activ_type, mid_channels)
 
         if normalize:
-            # group size = 1 (a.k.a. easy layernorm)
-            # self.norm = torch.nn.GroupNorm(1, mid_channels)
             self.norm = torch.nn.GroupNorm(1, mid_channels, affine=False)
-            # self.norm = torch.nn.InstanceNorm3d(mid_channels)
-
-        # add another local FC layer before activation
-        self.use_MLP = use_MLP
-        if self.use_MLP:
-            self.mlp_layer = ProjectionBlock(
-                mid_channels,
-                mid_channels,
-                activ_type=activ_type,
-                use_weight_norm=use_weight_norm,
-                final_bias=False,
-                normalize=True,
-            )
 
     # just the middle bit of an FNO
     def forward(self, x, injection=0):
