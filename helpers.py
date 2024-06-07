@@ -149,13 +149,12 @@ def print_activ_map(x):
 
         function_name = inspect.stack()[1].function
 
-        xmin = x.min(dim=(-3, -2, -1, 0))
-        xmax = x.max(dim=(-3, -2, -1, 0))
         xmean = x.mean(dim=(-3, -2, -1, 0))
         xstd = x.std(dim=(-3, -2, -1, 0))
+        xrms = (x**2).sum(dim=(-3, -2, -1, 0)).sqrt()
 
         print(
-            f"File {filename}:{line_num} ({function_name}) min is {xmin}, max is {xmax}, mean is {xmean}, std is {xstd},"
+            f"File {filename}:{line_num} ({function_name}) rms is {xrms}, mean is {xmean}, std is {xstd},"
         )
 
         del x

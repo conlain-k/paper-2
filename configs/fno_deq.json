@@ -11,6 +11,7 @@
     "add_Green_iter": false,
     "enforce_mean": true,
     "add_bcs_to_iter": true,
+    "scale_output": true,
     "fno_args": {
         "modes": [
             16,
@@ -18,14 +19,14 @@
         ],
         "normalize": true,
         "activ_type": "gelu",
-        "init_weight_scale": 0.1,
-        "use_weight_norm": false,
+        "init_weight_scale": 1,
+        "use_weight_norm": true,
         "resid_conn": true,
         "projection_channels": 128
     },
     "latent_dim": 24,
     "use_skip_update": false,
-    "lr_max": 5e-4,
-    "num_epochs": 200,
+    "lr_max": 1e-3,
+    "num_epochs": 100,
     "H1_deriv_scaling": 31
 }

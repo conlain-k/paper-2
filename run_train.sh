@@ -1,7 +1,8 @@
 #!/bin/bash
 #SBATCH -J train_NN                  		# job name
 #SBATCH -N 1 -n 6 --mem-per-cpu 20gb
-#SBATCH --gres=gpu:RTX_6000:1
+#SBATCH --gres=gpu:A100:1
+##SBATCH --gres=gpu:RTX_6000:1
 # #SBATCH --gres=gpu:V100:1
 #SBATCH -t 18:00:00
 #SBATCH -A gts-skalidindi7-coda20

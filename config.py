@@ -82,6 +82,8 @@ class Config:
 
     num_aux_dim: int = 0
 
+    scale_output: bool = True
+
     # otherwise use inception net
     use_fno: bool = False
 

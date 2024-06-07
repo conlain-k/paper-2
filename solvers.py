@@ -120,7 +120,13 @@ class Localizer_FeedForward(LocalizerBase):
             m = flatten_stiffness(C_field)
 
         x = self.net(m)
-        x = self.filter_result(x)
+
+        # push mean to equal zero (requires it to be corrected somewhere else)
+        if self.config.enforce_mean:
+            x = self.enforce_zero_mean(x)
+
+        if self.config.add_bcs_to_iter:
+            x += self.eps_bar.reshape(1, 6, 1, 1, 1)
 
         if self.config.scale_output:
             x *= self.constlaw.strain_scaling
@@ -237,11 +243,13 @@ class Localizer_DEQ(LocalizerBase):
 
         # predict new strain perturbation
         strain_kp = self.forward_net(z_k)
+        # print_activ_map(strain_kp.detach())
 
         # if self.config.use_skip_update:
         #     strain_kp += strain_k
 
         strain_kp = self.filter_result(strain_kp)
+        # print_activ_map(strain_kp.detach())
 
         assert not torch.isnan(strain_kp).any()
 

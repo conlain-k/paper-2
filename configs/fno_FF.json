@@ -10,6 +10,8 @@
     "use_energy": false,
     "add_Green_iter": false,
     "enforce_mean": true,
+    "scale_output": true,
+    "add_bcs_to_iter": true,
     "fno_args": {
         "modes": [
             16,
@@ -23,5 +25,5 @@
         "projection_channels": 128
     },
     "latent_dim": 24,
-    "lr_max": 5e-4
+    "lr_max": 1e-3
 }
