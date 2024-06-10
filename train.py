@@ -68,6 +68,10 @@ def compute_energy_loss(strain_error, C_field, add_deriv=False, ret_deriv=False)
         "brxyz, brcxyz, bcxyz -> bxyz", strain_error, C_field, strain_error
     )
 
+    diff = (err_alt - strain_error_energy).abs()
+
+    # print("diffstats", diff.min(), diff.max(), diff.mean(), diff.std())
+
     assert torch.allclose(err_alt, strain_error_energy)
 
     loss = strain_error_energy
@@ -88,7 +92,7 @@ def compute_energy_loss(strain_error, C_field, add_deriv=False, ret_deriv=False)
         )
 
         # print(f"Grad loss is {strain_error_grad_energy.mean():4f}")
-        loss += strain_error_grad_energy
+        loss = loss + strain_error_grad_energy
 
     if ret_deriv:
         return strain_error_energy, strain_error_grad_energy
@@ -276,16 +280,19 @@ def plot_worst(epoch, model, micro, strain_true):
         model.config.image_dir,
     )
 
-    ediff = compute_strain_energy(strain_true - strain_pred, stress_true - stress_pred)
+    # ediff = compute_strain_energy(strain_true - strain_pred, stress_true - stress_pred)
 
-    plot_pred(
-        epoch,
-        micro[0, 0][sind],
-        0 * ediff[0][sind],  # / model.constlaw.stress_scaling,
-        ediff[0][sind],  # / model.constlaw.stress_scaling,
-        "ediff",
-        model.config.image_dir,
-    )
+    # # resid_act = stress_true - stress_pred
+    # # resid_comp = model.constlaw(strain_true - strain_pred, C_field)
+
+    # plot_pred(
+    #     epoch,
+    #     micro[0, 0][sind],
+    #     0 * ediff[0][sind],  # / model.constlaw.stress_scaling,
+    #     ediff[0][sind],  # / model.constlaw.stress_scaling,
+    #     "ediff",
+    #     model.config.image_dir,
+    # )
 
     if model.config.use_deq:
 
@@ -352,8 +359,8 @@ def plot_worst(epoch, model, micro, strain_true):
     plot_pred(
         epoch,
         micro[0, 0][sind],
-        0 * energy_err[0][sind],  # / model.constlaw.energy_scaling,
-        energy_err[0][sind],  # / model.constlaw.energy_scaling,
+        0 * energy_err[sind],  # / model.constlaw.energy_scaling,
+        energy_err[sind],  # / model.constlaw.energy_scaling,
         "energy_err",
         model.config.image_dir,
     )
@@ -362,7 +369,25 @@ def plot_worst(epoch, model, micro, strain_true):
         micro[0, 0][sind],
         0 * energy_err_grad[0][sind],
         energy_err_grad[0][sind],
-        "energy_err_grad",
+        "energy_err_grad_x",
+        model.config.image_dir,
+    )
+
+    plot_pred(
+        epoch,
+        micro[0, 0][sind],
+        0 * energy_err_grad[1][sind],
+        energy_err_grad[1][sind],
+        "energy_err_grad_y",
+        model.config.image_dir,
+    )
+
+    plot_pred(
+        epoch,
+        micro[0, 0][sind],
+        0 * energy_err_grad[0][sind],
+        energy_err_grad[0][sind],
+        "energy_err_grad_z",
         model.config.image_dir,
     )
 
@@ -374,6 +399,9 @@ def plot_worst(epoch, model, micro, strain_true):
         "resid",
         model.config.image_dir,
     )
+
+    # err = (ediff - energy_err).abs()
+    # print("errstats", err.min(), err.max(), err.mean(), err.std())
 
 
 def compute_losses(model, strain_pred, strain_true, C_field, resid):
@@ -427,13 +455,7 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
             model.constlaw.C0_norm(resid).mean() / model.constlaw.energy_scaling
         )
 
-        # compute energy in residual
-        # resid_loss = (
-        #     compute_strain_energy(resid, model.constlaw(resid, C_field)).mean()
-        #     / model.constlaw.energy_scaling
-        # )
-
-    if model.config.compute_compat_err and model.config.use_deq:
+    if model.config.use_deq:
 
         err_compat, _ = model.greens_op.compute_residuals(strain_pred, stress_pred)
         # compute RMSE, averaged across channels/batch, converted to percent
@@ -767,8 +789,8 @@ def train_model(model, config, train_loader, valid_loader):
         )
 
         # clean out cuda cache
-        if model.config.use_fancy_iter and model.config.use_deq:
-            torch.cuda.empty_cache()
+        # if  model.config.use_deq:
+        #     torch.cuda.empty_cache()
 
         print(f"Training pass took {diff}s")
 

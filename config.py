@@ -33,7 +33,16 @@ class Config:
     image_dir: str = "images/default"
     arch_str: str = ""
 
-    # train info
+    # input features (at least one of these must be set to true!)
+    use_micro: bool = False
+    use_C_flat: bool = False
+    use_strain: bool = False
+    use_bc_strain: bool = False
+    use_stress: bool = False
+    use_stress_polarization: bool = False
+    use_energy: bool = False
+    use_FFT_resid: bool = False
+
     num_epochs: int = 100
     lr_max: float = 1e-3
     weight_decay: float = 0
@@ -46,6 +55,9 @@ class Config:
         }
     )
 
+    device: str = "cpu"
+    return_deq_trace: bool = False
+
     # Should we use a fixed maximum # iters, or randomize over training
     deq_randomize_max: bool = True
     deq_min_iter: int = 5
@@ -56,8 +68,8 @@ class Config:
         default_factory=lambda: {
             "f_solver": "anderson",
             "b_solver": "anderson",
-            "f_max_iter": 8,
-            "b_max_iter": 8,
+            "f_max_iter": 16,
+            "b_max_iter": 16,
             "f_tol": 1e-4,
             "b_tol": 1e-5,
             "use_ift": True,
@@ -74,49 +86,22 @@ class Config:
             "final_projection_channels": 128,
         }
     )
-    # how many channels to use in final projection block?
-    network_args: dict = field(
-        default_factory=lambda: {"inner_channels": 48, "num_blocks": 2}
-    )
-    device: str = "cpu"
-
-    num_aux_dim: int = 0
-
-    scale_output: bool = True
-
-    # otherwise use inception net
-    use_fno: bool = False
-
-    use_micro: bool = False
-    use_C_flat: bool = False
-    use_strain: bool = True
-    use_bc_strain: bool = True
-    use_stress: bool = True
-    use_stress_polarization: bool = False
-    use_energy: bool = True
-    use_FFT_resid: bool = False
-
-    return_deq_trace: bool = False
 
     # whether to output strain or displacement
     # output_displacement: bool = False
-    compute_compat_err: bool = True
+    # compute_compat_err: bool = True
 
-    grad_clip_mag: float = 10
+    grad_clip_mag: float = 1
     use_skip_update: bool = False
+    scale_output: bool = True
     enforce_mean: bool = True
     add_bcs_to_iter: bool = True
 
     use_EMA: bool = False
 
-    use_EMA: bool = False
-
     use_deq: bool = True
-    use_fancy_iter: bool = False
     return_resid: bool = True
     add_Green_iter: bool = True
-    # teacher_forcing: bool = False
-    latent_dim: int = 32
 
     # domain length in one direction
     num_voxels: int = 31
@@ -129,11 +114,6 @@ class Config:
     lam_energy: float = lam_energy
     lam_compat: float = lam_compat
     lam_resid: float = lam_resid
-
-    # if true, use a weighted inner product to convert quantities to energy-like terms
-    use_C0_weighted_loss: bool = True
-    # if true, also penalize derivative (finite difference) of errors
-    use_sobolev_loss: bool = True
 
     def __post_init__(self):
         conf_base = os.path.basename(self._conf_file)

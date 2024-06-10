@@ -171,8 +171,6 @@ class StrainToStress_crystal(StrainToStress_base):
             c=6,
         )
         # flatten euler angles first
-
-        # print(C_field.shape)
         return C_field
 
     def compute_C_field(self, micros):

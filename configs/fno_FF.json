@@ -4,7 +4,7 @@
     "use_deq": false,
     "use_micro": true,
     "use_strain": false,
-    "use_bc_strain": false,
+    "use_bc_strain": true,
     "use_stress": false,
     "use_stress_polarization": false,
     "use_energy": false,
@@ -19,13 +19,13 @@
         ],
         "normalize": true,
         "activ_type": "gelu",
-        "init_weight_scale": 1,
+        "init_weight_scale": 0.01,
         "use_weight_norm": true,
         "resid_conn": true,
-        "projection_channels": 128
+        "projection_channels": 128,
+        "latent_channels": 24
     },
-    "latent_dim": 24,
-    "lr_max": 1e-3,
+    "lr_max": 5e-4,
     "lam_strain": 1,
     "lam_stress": 0,
     "lam_energy": 0

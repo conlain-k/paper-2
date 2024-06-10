@@ -135,8 +135,6 @@ def cubic_mandel66(C11, C12, C44):
         # do not scale by mandel factor!!! for some reason this breaks things / makes the shear terms wrong
         new_mat[row, row] = C44 * 2
 
-    # print(new_mat)
-
     return new_mat
 
 
@@ -146,19 +144,12 @@ def batched_rotate(euler_ang, stiff_mat_base, passive=True):
     # assumes euler angles has some characteristic batch and channel size
     # input size is (c, 3) for euler and (3,3,3,3) for base
 
-    # print("e", euler_ang.shape)
-    # print("C", stiff_mat_base.shape)
-
     # get vector of rotation mats
     R = euler_angles_to_matrix(euler_ang, "ZXZ")
-
-    print(R.shape)
 
     # if passive:
     # flip 1st and 2nd indices (convert passive -> active) to match MOOSE
     # R = R.transpose(1, 2)
-
-    # print(R, R.shape)
 
     # do operation over flattened spatial vector
     C_field = torch.einsum(
