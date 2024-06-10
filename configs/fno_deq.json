@@ -12,20 +12,17 @@
     "enforce_mean": true,
     "add_bcs_to_iter": true,
     "scale_output": true,
-    "fno_args": {
-        "modes": [
-            16,
-            16
-        ],
-        "normalize": true,
-        "activ_type": "gelu",
-        "init_weight_scale": 0.01,
-        "use_weight_norm": true,
-        "resid_conn": true,
-        "projection_channels": 128,
-        "latent_channels": 24
-    },
     "use_skip_update": false,
     "lr_max": 5e-4,
-    "num_epochs": 200
+    "num_epochs": 100,
+    "num_pretrain_epochs": 2,
+    "deq_args": {
+        "f_solver": "anderson",
+        "b_solver": "anderson",
+        "f_max_iter": 16,
+        "b_max_iter": 16,
+        "f_tol": 1e-4,
+        "b_tol": 1e-5,
+        "use_ift": true
+    }
 }

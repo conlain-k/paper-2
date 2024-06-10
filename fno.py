@@ -23,27 +23,27 @@ class FNO(torch.nn.Module):
         **kwargs,
     ):
         super().__init__()
-        # lifting and projection blocks
-        # self.lift = torch.nn.Conv3d(in_channels, latent_channels, kernel_size=1)
+        # just use a regular conv for lift
+        self.lift = torch.nn.Conv3d(in_channels, latent_channels, kernel_size=1)
 
         # if use_weight_norm:
         #     self.lift = weight_norm(self.lift)
 
-        self.lift = ProjectionBlock(
-            in_channels,
-            latent_channels,
-            hidden_channels=final_projection_channels,
-            activ_type=activ_type,
-            use_weight_norm=use_weight_norm,
-            final_bias=True,
-        )
+        # self.lift = ProjectionBlock(
+        #     in_channels,
+        #     latent_channels,
+        #     hidden_channels=final_projection_channels,
+        #     activ_type=activ_type,
+        #     use_weight_norm=use_weight_norm,
+        #     final_bias=True,
+        # )
 
         self.proj = ProjectionBlock(
             latent_channels,
             out_channels,
             hidden_channels=final_projection_channels,
             activ_type=activ_type,
-            use_weight_norm=use_weight_norm,
+            use_weight_norm=False,
             final_bias=False,
         )
 

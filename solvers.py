@@ -83,7 +83,6 @@ class LocalizerBase(torch.nn.Module):
 
     def enforce_zero_mean(self, x):
         # remove the average value from a field (for each instance, channel)
-        # don't add any gradients from this operation (this smooths out gradients too much since every voxel depends equally on every other)
         return x - x.mean(dim=(-3, -2, -1), keepdim=True)
 
     # def green_iter(self, m, strain):
@@ -160,6 +159,8 @@ class Localizer_FeedForward(LocalizerBase):
         # compute input features (micro, c_flat, bcs, etc.)
         x = torch.concatenate(self.build_nonthermo_features(m), dim=1)
 
+        # print(x.detach().cpu().mean(dim=(-3, -2, -1, 0)), x.std(dim=(-3, -2, -1, 0)))
+
         # apply NN to encoded input
         x = self.net(x)
 
@@ -172,6 +173,8 @@ class Localizer_FeedForward(LocalizerBase):
 
         if self.config.add_bcs_to_iter:
             x += self.eps_bar.reshape(1, 6, 1, 1, 1)
+
+        # print(x.detach().cpu().mean(dim=(-3, -2, -1, 0)), x.std(dim=(-3, -2, -1, 0)))
 
         return x
 
@@ -231,6 +234,10 @@ class Localizer_DEQ(LocalizerBase):
         Given a stiffness tensor C corresponding to micro m, update the current strain field using the neural net
         """
         z_k = self.encode_micro_strain(m, C_field, strain_k)
+        # print(
+        #     z_k.detach().cpu().mean(dim=(-3, -2, -1, 0)),
+        #     z_k.detach().cpu().std(dim=(-3, -2, -1, 0)),
+        # )
 
         if self.config.add_Green_iter:
             # get moulinec-suquet update
@@ -244,8 +251,10 @@ class Localizer_DEQ(LocalizerBase):
 
         # predict new strain perturbation
         strain_kp = self.forward_net(z_k)
-
-        strain_kp = self.filter_result(strain_kp)
+        # print(
+        #     strain_kp.detach().cpu().mean(dim=(-3, -2, -1, 0)),
+        #     strain_kp.detach().cpu().std(dim=(-3, -2, -1, 0)),
+        # )
 
         assert not torch.isnan(strain_kp).any()
 
@@ -282,11 +291,8 @@ class Localizer_DEQ(LocalizerBase):
 
         out_scale = self.constlaw.strain_scaling if self.config.scale_output else 1
 
-        if self.config.use_fancy_iter:
-            # only project out strain if needed
-            strain_pred = hstar[:, :6] * out_scale
-        else:
-            strain_pred = hstar * out_scale
+        # now project out output and rescale appropriately
+        strain_pred = self.filter_result(hstar) * out_scale
 
         if self.config.return_deq_trace:
             # just return raw deq trace without postprocessing

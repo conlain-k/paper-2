@@ -21,7 +21,7 @@ lam_stress = lam_stress / lam_sum
 lam_energy = lam_energy / lam_sum
 
 # residual error is usually small anyways, and we want our DEQ gradients to be accurate
-lam_resid = 1000
+lam_resid = 10
 
 
 @dataclass
@@ -45,7 +45,6 @@ class Config:
 
     num_epochs: int = 100
     lr_max: float = 1e-3
-    weight_decay: float = 0
 
     loader_args: dict = field(
         default_factory=lambda: {
@@ -62,28 +61,28 @@ class Config:
     deq_randomize_max: bool = True
     deq_min_iter: int = 5
 
-    num_pretrain_epochs = 0
+    num_pretrain_epochs: int = 0
 
     deq_args: dict = field(
         default_factory=lambda: {
-            "f_solver": "anderson",
-            "b_solver": "anderson",
-            "f_max_iter": 16,
-            "b_max_iter": 16,
-            "f_tol": 1e-4,
-            "b_tol": 1e-5,
-            "use_ift": True,
+            "f_solver": None,
+            "b_solver": None,
+            "f_max_iter": None,
+            "b_max_iter": None,
+            "f_tol": None,
+            "b_tol": None,
+            "use_ift": None,
         }
     )
     fno_args: dict = field(
         default_factory=lambda: {
-            "modes": (12,),
-            "normalize": True,
-            "activ_type": "gelu",
-            "init_weight_scale": 0.01,
+            "modes": None,
+            "normalize": None,
+            "activ_type": None,
+            "init_weight_scale": None,
             # IMPORTANT: lift into higher dim before projection (original paper does this)
-            "use_weight_norm": True,
-            "final_projection_channels": 128,
+            "use_weight_norm": None,
+            "final_projection_channels": None,
         }
     )
 
