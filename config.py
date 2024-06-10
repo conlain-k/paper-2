@@ -21,7 +21,7 @@ lam_stress = lam_stress / lam_sum
 lam_energy = lam_energy / lam_sum
 
 # residual error is usually small anyways, and we want our DEQ gradients to be accurate
-lam_resid = 100
+lam_resid = 1000
 
 
 @dataclass
@@ -34,7 +34,7 @@ class Config:
     arch_str: str = ""
 
     # train info
-    num_epochs: int = 200
+    num_epochs: int = 100
     lr_max: float = 1e-3
     weight_decay: float = 0
 

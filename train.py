@@ -80,14 +80,11 @@ def compute_energy_loss(strain_error, C_field, add_deriv=False, ret_deriv=False)
         strain_error_grad = torch.stack(strain_error_grad, dim=-1)
 
         # also sum over last dimension (spatial deriv index) to get squared 2-norm of vector field
-        strain_error_grad_energy = (
-            torch.einsum(
-                "brxyzd, brcxyz, bcxyzd -> bxyz",
-                strain_error_grad,
-                C_field,
-                strain_error_grad,
-            )
-            * 0.0
+        strain_error_grad_energy = torch.einsum(
+            "brxyzd, brcxyz, bcxyzd -> bxyz",
+            strain_error_grad,
+            C_field,
+            strain_error_grad,
         )
 
         # print(f"Grad loss is {strain_error_grad_energy.mean():4f}")

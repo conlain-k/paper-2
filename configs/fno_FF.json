@@ -25,5 +25,8 @@
         "projection_channels": 128
     },
     "latent_dim": 24,
-    "lr_max": 1e-3
+    "lr_max": 1e-3,
+    "lam_strain": 1,
+    "lam_stress": 0,
+    "lam_energy": 0
 }
