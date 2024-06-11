@@ -1,10 +1,9 @@
 {
     "_description": "Feed-forward FNO solver",
-    "_parent": "configs/fno_main.json",
     "use_deq": false,
     "use_micro": true,
     "use_strain": false,
-    "use_bc_strain": true,
+    "use_bc_strain": false,
     "use_stress": false,
     "use_stress_polarization": false,
     "use_energy": false,
@@ -13,6 +12,21 @@
     "scale_output": true,
     "add_bcs_to_iter": true,
     "lr_max": 5e-4,
-    "num_epochs": 100,
-    "num_pretrain_epochs": 0
+    "num_epochs": 50,
+    "num_pretrain_epochs": 0,
+    "fno_args": {
+        "modes": [
+            16,
+            16
+        ],
+        "activ_type": "prelu",
+        "init_weight_scale": 4,
+        "normalize": true,
+        "use_weight_norm": true,
+        "resid_conn": true,
+        "projection_channels": 128,
+        "use_MLP": false,
+        "latent_channels": 24,
+        "normalize_inputs": true
+    }
 }

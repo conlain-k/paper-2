@@ -24,12 +24,20 @@ class StrainToStress_base(torch.nn.Module):
 
     def compute_scalings(self, eps_bar):
         frob = lambda x: (x**2).sum().sqrt()
+        # print("Computing scalings!")
+        # print(self.C_ref)
         self.stiffness_scaling = frob(self.C_ref)
+
+        # print(self.C_ref / self.stiffness_scaling)
+        # print(frob(self.C_ref / self.stiffness_scaling))
+
         self.strain_scaling = frob(eps_bar)
 
         # compute other scalings downstream of this one
         self.stress_scaling = self.stiffness_scaling * self.strain_scaling
         self.energy_scaling = self.stress_scaling * self.strain_scaling
+
+        # exit(1)
 
     def compute_C_matrix(self, lamb, mu):
         new_mat = torch.zeros((6, 6), dtype=torch.float32, requires_grad=False)
@@ -61,7 +69,7 @@ class StrainToStress_base(torch.nn.Module):
 
         return stress_polarization
 
-    def forward(self, strain, C_field):
+    def forward(self, C_field, strain):
         """Apply a given constitutive law over a batch of n-phase microstructures"""
 
         stress = torch.einsum("brcxyz, bcxyz->brxyz", C_field, strain)
@@ -372,7 +380,7 @@ def weighted_norm(field, weight_mat, average):
 
 def compute_quants(model, strain, C_field):
     # handy helper to compute multiple thermodynamic quantities at once
-    stress = model.constlaw(strain, C_field)
+    stress = model.constlaw(C_field, strain)
     stress_polar = model.constlaw.stress_pol(strain, C_field)
     energy = compute_strain_energy(strain, stress)
 

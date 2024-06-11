@@ -1,10 +1,9 @@
 {
     "_description": "DEQ FNO solver",
-    "_parent": "configs/fno_main.json",
     "use_deq": true,
     "use_micro": false,
     "use_strain": true,
-    "use_bc_strain": true,
+    "use_bc_strain": false,
     "use_stress": true,
     "use_stress_polarization": true,
     "use_energy": true,
@@ -14,15 +13,30 @@
     "scale_output": true,
     "use_skip_update": false,
     "lr_max": 5e-4,
-    "num_epochs": 100,
-    "num_pretrain_epochs": 2,
+    "num_epochs": 50,
+    "num_pretrain_epochs": 0,
     "deq_args": {
         "f_solver": "anderson",
         "b_solver": "anderson",
-        "f_max_iter": 16,
-        "b_max_iter": 16,
+        "f_max_iter": 8,
+        "b_max_iter": 8,
         "f_tol": 1e-4,
         "b_tol": 1e-5,
         "use_ift": true
+    },
+    "fno_args": {
+        "modes": [
+            16,
+            16
+        ],
+        "activ_type": "gelu",
+        "init_weight_scale": 2,
+        "normalize": true,
+        "use_weight_norm": true,
+        "resid_conn": true,
+        "projection_channels": 128,
+        "use_MLP": false,
+        "latent_channels": 24,
+        "normalize_inputs": true
     }
 }

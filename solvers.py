@@ -207,7 +207,7 @@ class Localizer_DEQ(LocalizerBase):
 
         if self.config.use_stress or self.config.use_energy:
             # precompute stress for convenience
-            stress = self.constlaw(strain, C_field)
+            stress = self.constlaw(C_field, strain)
 
         # build up features
         if self.config.use_stress:
@@ -220,7 +220,7 @@ class Localizer_DEQ(LocalizerBase):
         if self.config.use_stress_polarization:
             stress_polar = self.constlaw.stress_pol(strain, C_field, scaled=True)
             # negate stress polarization to get positive-ish values
-            stress_polar *= -1
+            # stress_polar *= -1
             feat.append(stress_polar)
 
         # collect features into a vector
@@ -234,10 +234,6 @@ class Localizer_DEQ(LocalizerBase):
         Given a stiffness tensor C corresponding to micro m, update the current strain field using the neural net
         """
         z_k = self.encode_micro_strain(m, C_field, strain_k)
-        # print(
-        #     z_k.detach().cpu().mean(dim=(-3, -2, -1, 0)),
-        #     z_k.detach().cpu().std(dim=(-3, -2, -1, 0)),
-        # )
 
         if self.config.add_Green_iter:
             # get moulinec-suquet update
@@ -251,10 +247,8 @@ class Localizer_DEQ(LocalizerBase):
 
         # predict new strain perturbation
         strain_kp = self.forward_net(z_k)
-        # print(
-        #     strain_kp.detach().cpu().mean(dim=(-3, -2, -1, 0)),
-        #     strain_kp.detach().cpu().std(dim=(-3, -2, -1, 0)),
-        # )
+
+        strain_kp = self.filter_result(strain_kp)
 
         assert not torch.isnan(strain_kp).any()
 
@@ -292,7 +286,7 @@ class Localizer_DEQ(LocalizerBase):
         out_scale = self.constlaw.strain_scaling if self.config.scale_output else 1
 
         # now project out output and rescale appropriately
-        strain_pred = self.filter_result(hstar) * out_scale
+        strain_pred = hstar * out_scale
 
         if self.config.return_deq_trace:
             # just return raw deq trace without postprocessing

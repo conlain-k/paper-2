@@ -151,7 +151,7 @@ class GreensOp(torch.nn.Module):
             eps_kp = E_bar - self.apply_gamma(tau)
 
         else:
-            sigma = self.constlaw.forward(eps_k, C_field)
+            sigma = self.constlaw(C_field, eps_k)
             eps_pert = self.apply_gamma(sigma)
             # eps_pert = eps_pert - eps_pert.mean(dim=(-3, -2, -1), keepdim=True)
             eps_kp = eps_k - eps_pert

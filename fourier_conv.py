@@ -40,7 +40,7 @@ class SpectralConv3d(torch.nn.Module):
         # weight start uniformly between 0 and 1
         self.weights = torch.nn.Parameter(
             self.scale
-            * torch.randn(
+            * torch.rand(
                 self.in_channels,
                 self.out_channels,
                 2 * self.modes1 - 1,

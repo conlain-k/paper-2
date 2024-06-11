@@ -21,7 +21,7 @@ lam_stress = lam_stress / lam_sum
 lam_energy = lam_energy / lam_sum
 
 # residual error is usually small anyways, and we want our DEQ gradients to be accurate
-lam_resid = 10
+lam_resid = 100
 
 
 @dataclass
@@ -30,7 +30,7 @@ class Config:
     _description: str = "Default args"
     _parent: str = None
     _conf_file: str = None
-    image_dir: str = "images/default"
+    image_dir: str = "images/default/"
     arch_str: str = ""
 
     # input features (at least one of these must be set to true!)
@@ -48,7 +48,7 @@ class Config:
 
     loader_args: dict = field(
         default_factory=lambda: {
-            DataMode.TRAIN: {"batch_size": 8, "shuffle": True, "num_workers": 1},
+            DataMode.TRAIN: {"batch_size": 16, "shuffle": True, "num_workers": 1},
             DataMode.VALID: {"batch_size": 256, "shuffle": False, "num_workers": 1},
             DataMode.TEST: {"batch_size": 256, "shuffle": False, "num_workers": 1},
         }
@@ -90,7 +90,7 @@ class Config:
     # output_displacement: bool = False
     # compute_compat_err: bool = True
 
-    grad_clip_mag: float = 1
+    grad_clip_mag: float = 10
     use_skip_update: bool = False
     scale_output: bool = True
     enforce_mean: bool = True
@@ -121,7 +121,7 @@ class Config:
         if self.use_EMA:
             self.arch_str += "_EMA"
 
-        self.image_dir = f"images/{self.arch_str}"
+        self.image_dir = f"images/{self.arch_str}/"
 
     def get_save_str(self, model, epoch, best=False):
         # get save string with info regarding this run

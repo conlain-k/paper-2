@@ -19,24 +19,21 @@ class FNO(torch.nn.Module):
         final_projection_channels=128,  # defaults to bigger of latent_channels, out_channels
         activ_type="gelu",
         use_weight_norm=False,
+        normalize_inputs=False,
         modes=(10, 10),
         **kwargs,
     ):
         super().__init__()
         # just use a regular conv for lift
-        self.lift = torch.nn.Conv3d(in_channels, latent_channels, kernel_size=1)
+        # self.lift = torch.nn.Conv3d(in_channels, latent_channels, kernel_size=1)
 
-        # if use_weight_norm:
-        #     self.lift = weight_norm(self.lift)
-
-        # self.lift = ProjectionBlock(
-        #     in_channels,
-        #     latent_channels,
-        #     hidden_channels=final_projection_channels,
-        #     activ_type=activ_type,
-        #     use_weight_norm=use_weight_norm,
-        #     final_bias=True,
-        # )
+        self.lift = ProjectionBlock(
+            in_channels,
+            latent_channels,
+            hidden_channels=final_projection_channels,
+            activ_type=activ_type,
+            use_weight_norm=False,
+        )
 
         self.proj = ProjectionBlock(
             latent_channels,
@@ -44,7 +41,6 @@ class FNO(torch.nn.Module):
             hidden_channels=final_projection_channels,
             activ_type=activ_type,
             use_weight_norm=False,
-            final_bias=False,
         )
 
         blocks = []
@@ -61,11 +57,17 @@ class FNO(torch.nn.Module):
 
         self.blocks = torch.nn.ModuleList(blocks)
 
-        self.input_norm = torch.nn.GroupNorm(1, in_channels)
+        self.normalize_inputs = normalize_inputs
+        if self.normalize_inputs:
+            self.input_norm = torch.nn.GroupNorm(
+                1,
+                in_channels,
+            )
 
     def forward(self, x):
 
-        x = self.input_norm(x)
+        if self.normalize_inputs:
+            x = self.input_norm(x)
         x = self.lift(x)
 
         for block in self.blocks:
@@ -89,6 +91,7 @@ class FNO_Block(torch.nn.Module):
         normalize,
         init_weight_scale,
         resid_conn,
+        use_MLP,
         **kwargs,
     ):
         super().__init__()
@@ -116,7 +119,20 @@ class FNO_Block(torch.nn.Module):
 
         self.activ = get_activ(activ_type, latent_channels)
 
-        if normalize:
+        self.use_MLP = use_MLP
+
+        if self.use_MLP:
+
+            self.MLP = ProjectionBlock(
+                latent_channels,
+                latent_channels,
+                hidden_channels=latent_channels,
+                activ_type=activ_type,
+                use_weight_norm=use_weight_norm,
+                final_bias=True,
+            )
+
+        if self.normalize:
             self.norm = torch.nn.GroupNorm(1, latent_channels)
 
     # just the middle bit of an FNO
@@ -126,7 +142,13 @@ class FNO_Block(torch.nn.Module):
             x0 = x
 
         x = self.norm(x) if self.normalize else x
-        x = self.activ(self.conv(x) + self.filt(x))
+
+        x1 = self.conv(x)
+        if self.use_MLP:
+            x1 = self.MLP(x1)
+
+        x2 = self.filt(x)
+        x = self.activ(x1 + x2)
 
         if self.resid_conn:
             # residual connection
