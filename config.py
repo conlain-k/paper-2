@@ -6,9 +6,9 @@ import os
 DELIM = "-" * 40
 
 # coefficients for balancing loss functions
-lam_strain = 0
-lam_stress = 0
-lam_energy = 1
+lam_strain = 1
+lam_stress = 1
+lam_energy = 0
 
 
 # penalize compatibility error heavily

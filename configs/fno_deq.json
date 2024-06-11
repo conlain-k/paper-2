@@ -18,8 +18,8 @@
     "deq_args": {
         "f_solver": "anderson",
         "b_solver": "anderson",
-        "f_max_iter": 8,
-        "b_max_iter": 8,
+        "f_max_iter": 12,
+        "b_max_iter": 12,
         "f_tol": 1e-4,
         "b_tol": 1e-5,
         "use_ift": true
@@ -29,7 +29,7 @@
             16,
             16
         ],
-        "activ_type": "gelu",
+        "activ_type": "relu",
         "init_weight_scale": 2,
         "normalize": true,
         "use_weight_norm": true,

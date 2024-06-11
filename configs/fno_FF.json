@@ -19,8 +19,8 @@
             16,
             16
         ],
-        "activ_type": "prelu",
-        "init_weight_scale": 4,
+        "activ_type": "relu",
+        "init_weight_scale": 2,
         "normalize": true,
         "use_weight_norm": true,
         "resid_conn": true,

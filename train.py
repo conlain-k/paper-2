@@ -389,35 +389,12 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
     # stress_scaling = frob_norm_2(stress_true)
 
     # scaled errors in strain and stress
-    strain_error_scaled = (
-        frob_norm(strain_true - strain_pred) / model.constlaw.strain_scaling
+    strain_loss = model.constlaw.C0_norm(strain_true - strain_pred).mean() / (
+        model.constlaw.energy_scaling
     )
-    stress_error_scaled = (
-        frob_norm(stress_true - stress_pred) / model.constlaw.stress_scaling
+    stress_loss = model.constlaw.S0_norm(stress_true - stress_pred).mean() / (
+        model.constlaw.energy_scaling
     )
-
-    # take voxel-wise 2-norm of errors
-    strain_L2_scaled = strain_error_scaled  # (strain_error_scaled**2).sum(dim=1)
-    stress_L2_scaled = stress_error_scaled  # (stress_error_scaled**2).sum(dim=1)
-    # energy is its own 2 norm
-    # energy_L2_scaled = compute_strain_energy(strain_error_scaled, stress_error_scaled)
-
-    # print("strain", strain_L2_scaled.mean(), strain_L2_scaled.std())
-    # print("stress", stress_L2_scaled.mean(), stress_L2_scaled.std())
-    # print("energy", energy_L2_scaled.mean(), energy_L2_scaled.std())
-
-    # take average L2 errors over whole domain
-    strain_loss = strain_L2_scaled.mean().sqrt()
-    stress_loss = stress_L2_scaled.mean().sqrt()
-    # energy is already squared and condensed to one
-    energy_loss = 0 * strain_loss
-
-    # strain_loss = strain_loss.mean()
-
-    # # take squared 2-norm of div sigma
-    # stress_loss = ((stress_true - stress_pred) / model.constlaw.stress_scaling) ** 2
-
-    # stress_loss = stress_loss.mean()
 
     energy_loss = (
         compute_strain_energy(strain_true - strain_pred, stress_true - stress_pred)
