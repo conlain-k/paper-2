@@ -20,7 +20,7 @@
         ],
         "normalize": true,
         "activ_type": "gelu",
-        "init_weight_scale": 0.1,
+        "init_weight_scale": 2,
         "use_weight_norm": true,
         "resid_conn": true,
         "latent_channels": 20,

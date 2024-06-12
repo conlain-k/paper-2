@@ -226,9 +226,9 @@ def plot_example(epoch, model, loader, ind, add_str=None):
         / model.constlaw.energy_scaling
     )
 
-    stress_loss_deriv = deriv_loss(stress_loss, reduce=False)
+    stress_loss_deriv = deriv_loss(stress_loss, reduce=False).squeeze()
 
-    strain_loss_deriv = deriv_loss(strain_loss, reduce=False)
+    strain_loss_deriv = deriv_loss(strain_loss, reduce=False).squeeze()
 
     plot_pred(
         epoch,
@@ -270,6 +270,14 @@ def plot_example(epoch, model, loader, ind, add_str=None):
         stress_true[0, FIELD_IND][sind] / model.constlaw.stress_scaling,
         stress_pred[0, FIELD_IND][sind] / model.constlaw.stress_scaling,
         "stress",
+        model.config.image_dir + add_str,
+    )
+    plot_pred(
+        epoch,
+        micro[0, 0][sind],
+        0 * stress_loss[0][sind],
+        stress_loss[0][sind],
+        "stress_loss",
         model.config.image_dir + add_str,
     )
     plot_pred(
