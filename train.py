@@ -391,7 +391,7 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
     )
     stress_loss_L2 = stress_err_norm.mean()
 
-    stress_deriv_loss = deriv_loss(stress_err_norm) / 10.0
+    stress_deriv_loss = deriv_loss(stress_err_norm)
     stress_loss = stress_loss_L2 + stress_deriv_loss
 
     strain_resid = (
@@ -402,7 +402,7 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
     strain_loss_L2 = strain_resid.mean()
     strain_deriv_loss = deriv_loss(strain_resid) / 20.0
 
-    strain_loss = strain_loss_L2 + strain_deriv_loss
+    strain_loss = strain_loss_L2  # + strain_deriv_loss
 
     energy_loss = (
         compute_energy_loss(strain_true - strain_pred, C_field, add_deriv=True).mean()
@@ -423,6 +423,10 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
 
     resid_loss = torch.as_tensor(0.0)
     compat_loss = torch.as_tensor(0.0)
+
+    # print("RMS strain", (strain_true**2).sum(dim=1).mean().sqrt())
+    # print("mean strain", strain_true.mean(dim=(0, -1, -2, -3)))
+    # print("std strain", strain_true.std(dim=(0, -1, -2, -3)))
 
     if model.config.return_resid:
         # compute energy in residual and add that term
@@ -626,7 +630,7 @@ def train_model(model, config, train_loader, valid_loader):
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr_max)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, config.num_epochs, eta_min=1e-6
+        optimizer, config.num_epochs, eta_min=1e-8
     )
     # scheduler = torch.optim.lr_scheduler.OneCycleLR(
     #     optimizer,

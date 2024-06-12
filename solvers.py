@@ -93,7 +93,7 @@ class LocalizerBase(torch.nn.Module):
 
         # add mean strain as correction
         if self.config.add_bcs_to_iter:
-            x += self.scaled_average_strain
+            x = x + self.scaled_average_strain
 
         return x
 
@@ -125,8 +125,8 @@ class Localizer_FeedForward(LocalizerBase):
         if self.config.enforce_mean:
             x = self.enforce_zero_mean(x)
 
-        if self.config.scale_output:
-            x *= self.constlaw.strain_scaling
+        # if self.config.scale_output:
+        #     x *= self.constlaw.strain_scaling
 
         if self.config.add_bcs_to_iter:
             x += self.eps_bar.reshape(1, 6, 1, 1, 1)

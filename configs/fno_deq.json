@@ -4,7 +4,7 @@
     "use_deq": true,
     "use_micro": false,
     "use_strain": true,
-    "use_bc_strain": true,
+    "use_bc_strain": false,
     "use_stress": true,
     "use_stress_polarization": true,
     "use_energy": true,
@@ -15,17 +15,18 @@
     "fno_args": {
         "modes": [
             16,
+            16,
             16
         ],
         "normalize": true,
         "activ_type": "gelu",
-        "init_weight_scale": 1,
+        "init_weight_scale": 0.01,
         "use_weight_norm": true,
         "resid_conn": true,
         "projection_channels": 128
     },
-    "latent_dim": 24,
+    "latent_dim": 20,
     "use_skip_update": false,
-    "lr_max": 1e-3,
+    "lr_max": 1e-4,
     "num_epochs": 100
 }

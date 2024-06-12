@@ -63,10 +63,9 @@ class FNO(torch.nn.Module):
             # apply FNO blocks sequentially
             x = block(x)
 
-        # also normalize output of FNO chain
-        # x = self.input_norm(x)
-        # now do two projection steps, with an activation in the middle
+        # now project onto strain field
         x = self.proj(x)
+
         return x
 
 
