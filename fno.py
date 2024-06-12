@@ -15,27 +15,32 @@ class FNO(torch.nn.Module):
         self,
         in_channels,
         out_channels,
-        mid_channels=24,
-        final_projection_channels=128,  # defaults to bigger of mid_channels, out_channels
+        latent_channels=24,
+        final_projection_channels=128,  # defaults to bigger of latent_channels, out_channels
         activ_type="gelu",
         use_weight_norm=False,
+        normalize_inputs=False,
         modes=(10, 10),
         **kwargs,
     ):
         super().__init__()
-        # lifting and projection blocks
-        self.lift = torch.nn.Conv3d(in_channels, mid_channels, kernel_size=1)
+        # just use a regular conv for lift
+        self.lift = torch.nn.Conv3d(in_channels, latent_channels, kernel_size=1)
 
-        # if use_weight_norm:
-        #     self.lift = weight_norm(self.lift)
+        # self.lift = ProjectionBlock(
+        #     in_channels,
+        #     latent_channels,
+        #     hidden_channels=final_projection_channels,
+        #     activ_type=activ_type,
+        #     use_weight_norm=False,
+        # )
 
         self.proj = ProjectionBlock(
-            mid_channels,
+            latent_channels,
             out_channels,
             hidden_channels=final_projection_channels,
             activ_type=activ_type,
             use_weight_norm=False,
-            final_bias=False,
         )
 
         blocks = []
@@ -44,7 +49,7 @@ class FNO(torch.nn.Module):
                 FNO_Block(
                     activ_type=activ_type,
                     use_weight_norm=use_weight_norm,
-                    mid_channels=mid_channels,
+                    latent_channels=latent_channels,
                     num_modes=mm,
                     **kwargs,
                 )
@@ -52,11 +57,17 @@ class FNO(torch.nn.Module):
 
         self.blocks = torch.nn.ModuleList(blocks)
 
-        self.input_norm = torch.nn.GroupNorm(1, in_channels)
+        self.normalize_inputs = normalize_inputs
+        if self.normalize_inputs:
+            self.input_norm = torch.nn.GroupNorm(
+                1,
+                in_channels,
+            )
 
     def forward(self, x):
 
-        x = self.input_norm(x)
+        if self.normalize_inputs:
+            x = self.input_norm(x)
         x = self.lift(x)
 
         for block in self.blocks:
@@ -74,7 +85,7 @@ class FNO_Block(torch.nn.Module):
         self,
         activ_type,
         use_weight_norm,
-        mid_channels,
+        latent_channels,
         num_modes,
         normalize,
         init_weight_scale,
@@ -88,8 +99,8 @@ class FNO_Block(torch.nn.Module):
 
         # spectral convolution
         self.conv = fourier_conv.SpectralConv3d(
-            mid_channels,
-            mid_channels,
+            latent_channels,
+            latent_channels,
             num_modes,
             num_modes,
             num_modes,
@@ -98,16 +109,16 @@ class FNO_Block(torch.nn.Module):
 
         # local channel-wise filter
         self.filt = torch.nn.Conv3d(
-            mid_channels, mid_channels, kernel_size=1, bias=True
+            latent_channels, latent_channels, kernel_size=1, bias=True
         )
 
         if use_weight_norm:
             self.filt = weight_norm(self.filt)
 
-        self.activ = get_activ(activ_type, mid_channels)
+        self.activ = get_activ(activ_type, latent_channels)
 
         if normalize:
-            self.norm = torch.nn.GroupNorm(1, mid_channels)
+            self.norm = torch.nn.GroupNorm(1, latent_channels)
 
     # just the middle bit of an FNO
     def forward(self, x):

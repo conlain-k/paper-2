@@ -30,11 +30,20 @@ class Config:
     _description: str = "Default args"
     _parent: str = None
     _conf_file: str = None
-    image_dir: str = "images/default"
+    image_dir: str = "images/default/"
     arch_str: str = ""
 
-    # train info
-    num_epochs: int = 200
+    # input features (at least one of these must be set to true!)
+    use_micro: bool = False
+    use_C_flat: bool = False
+    use_strain: bool = False
+    use_bc_strain: bool = False
+    use_stress: bool = False
+    use_stress_polarization: bool = False
+    use_energy: bool = False
+    use_FFT_resid: bool = False
+
+    num_epochs: int = 100
     lr_max: float = 1e-3
     weight_decay: float = 0
 
@@ -46,75 +55,49 @@ class Config:
         }
     )
 
+    device: str = "cpu"
+    return_deq_trace: bool = False
+
     # Should we use a fixed maximum # iters, or randomize over training
     deq_randomize_max: bool = True
     deq_min_iter: int = 5
 
-    num_pretrain_epochs = 0
+    num_pretrain_epochs: int = 0
 
     deq_args: dict = field(
         default_factory=lambda: {
-            "f_solver": "anderson",
-            "b_solver": "anderson",
-            "f_max_iter": 8,
-            "b_max_iter": 8,
-            "f_tol": 1e-4,
-            "b_tol": 1e-5,
-            "use_ift": True,
+            "f_solver": None,
+            "b_solver": None,
+            "f_max_iter": None,
+            "b_max_iter": None,
+            "f_tol": None,
+            "b_tol": None,
+            "use_ift": None,
         }
     )
     fno_args: dict = field(
         default_factory=lambda: {
-            "modes": (12,),
-            "normalize": True,
-            "activ_type": "gelu",
-            "init_weight_scale": 0.01,
+            "modes": None,
+            "normalize": None,
+            "activ_type": None,
+            "init_weight_scale": None,
             # IMPORTANT: lift into higher dim before projection (original paper does this)
-            "use_weight_norm": True,
-            "final_projection_channels": 128,
+            "use_weight_norm": None,
+            "final_projection_channels": None,
         }
     )
-    # how many channels to use in final projection block?
-    network_args: dict = field(
-        default_factory=lambda: {"inner_channels": 48, "num_blocks": 2}
-    )
-    device: str = "cpu"
-
-    num_aux_dim: int = 0
-
-    scale_output: bool = True
-
-    # otherwise use inception net
-    use_fno: bool = False
-
-    use_micro: bool = False
-    use_C_flat: bool = False
-    use_strain: bool = True
-    use_bc_strain: bool = True
-    use_stress: bool = True
-    use_stress_polarization: bool = False
-    use_energy: bool = True
-    use_FFT_resid: bool = False
-
-    return_deq_trace: bool = False
-
-    # whether to output strain or displacement
-    # output_displacement: bool = False
-    compute_compat_err: bool = True
 
     grad_clip_mag: float = 1
     use_skip_update: bool = False
+    scale_output: bool = True
     enforce_mean: bool = True
     add_bcs_to_iter: bool = True
 
     use_EMA: bool = False
 
     use_deq: bool = True
-    use_fancy_iter: bool = False
     return_resid: bool = True
     add_Green_iter: bool = True
-    # teacher_forcing: bool = False
-    latent_dim: int = 32
 
     # domain length in one direction
     num_voxels: int = 31
@@ -128,11 +111,6 @@ class Config:
     lam_compat: float = lam_compat
     lam_resid: float = lam_resid
 
-    # if true, use a weighted inner product to convert quantities to energy-like terms
-    use_C0_weighted_loss: bool = True
-    # if true, also penalize derivative (finite difference) of errors
-    use_sobolev_loss: bool = True
-
     def __post_init__(self):
         conf_base = os.path.basename(self._conf_file)
         conf_base, _ = os.path.splitext(conf_base)
@@ -140,7 +118,7 @@ class Config:
         if self.use_EMA:
             self.arch_str += "_EMA"
 
-        self.image_dir = f"images/{self.arch_str}"
+        self.image_dir = f"images/{self.arch_str}/"
 
     def get_save_str(self, model, epoch, best=False):
         # get save string with info regarding this run

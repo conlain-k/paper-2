@@ -8,24 +8,6 @@ from torch.utils.checkpoint import checkpoint
 from helpers import print_activ_map
 
 
-def make_model(config, input_channels, output_channels):
-    # neural net component takes in strain, stress, energy and outputs strain
-    if config.use_fno:
-        # use full FNO
-        return FNO(
-            in_channels=input_channels,
-            out_channels=output_channels,
-            mid_channels=config.latent_dim,
-            **config.fno_args,
-        )
-    else:
-        return SimpleLayerNet(
-            in_channels=input_channels,
-            out_channels=output_channels,
-            **config.network_args,
-        )
-
-
 def make_localizer(config):
     if config.use_deq:
         return Localizer_DEQ(config)
@@ -50,6 +32,33 @@ class LocalizerBase(torch.nn.Module):
         # if in pretraining mode, don't perform certain normalizations
         # this allows us to enforce constraints (e.g. average mean) without messing up early training
         self.pretraining = True
+
+    def count_input_channels(self):
+        channels = 0
+        # micro-type features
+        if self.config.use_micro:
+            channels += 2  # TODO change for n-phase / polycrystal
+        if self.config.use_C_flat:
+            channels += 21
+        # strain-type features
+        if self.config.use_strain:
+            channels += 6
+        if self.config.use_bc_strain:
+            channels += 6
+
+        # stress-type features
+        if self.config.use_stress:
+            channels += 6
+        if self.config.use_stress_polarization:
+            channels += 6
+
+        # other thermo features
+        if self.config.use_energy:
+            channels += 1
+        if self.config.use_FFT_resid:
+            channels += 6
+
+        return channels
 
     def setConstParams(self, E_vals, nu_vals, eps_bar):
         # set up constitutive model
@@ -97,29 +106,65 @@ class LocalizerBase(torch.nn.Module):
 
         return x
 
-    # def forward(self, m, init_guess=None):
-    #     raise NotImplementedError
+    def build_nonthermo_features(self, m, C_field=None):
+        # build non-thermodynamic features (e.g. stiffness, micro, BC strains);
+        # call this from child classes to ensure we build the full vector!
+        feat = []
+        if self.config.use_micro:
+            # append all phases for convenience
+            feat.append(m)
+
+        if self.config.use_C_flat:
+            if C_field is None:
+                C_field = (
+                    self.constlaw.compute_C_field(m) / self.constlaw.stiffness_scaling
+                )
+
+            # append all phases for convenience
+            feat.append(flatten_stiffness(C_field))
+
+        # add in BC strains
+        if self.config.use_bc_strain:
+            eps_avg = self.compute_init_scaled_strain(m, None)
+            feat.append(eps_avg)
+
+        return feat
+
+    def compute_init_scaled_strain(self, micro, init_guess):
+        # get initial strain field (scaled appropriately)
+        if init_guess is not None:
+            return init_guess
+        eps_shape = list(micro.shape)
+        # eps should be b * 6 * xyz (since 6 indep strain components)
+        # TODO get # voxels in a more stable fashion
+        Nx = eps_shape[-2]
+
+        # broadcast avg strain to all locations
+        init_strain = (
+            micro.new_ones((eps_shape[0], 6, Nx, Nx, Nx)) * self.scaled_average_strain
+        )
+
+        return init_strain
 
 
 class Localizer_FeedForward(LocalizerBase):
     # base class for localization models
     def __init__(self, config):
         super().__init__(config)
-        if self.config.use_C_flat:
-            input_channels = 21
-        else:
-            input_channels = 2
-
-        self.net = make_model(config, input_channels=input_channels, output_channels=6)
+        self.net = FNO(
+            in_channels=self.count_input_channels(),
+            out_channels=6,
+            **config.fno_args,
+        )
 
     def forward(self, m):
+        # compute input features (micro, c_flat, bcs, etc.)
+        x = torch.concatenate(self.build_nonthermo_features(m), dim=1)
 
-        if self.config.use_C_flat:
-            C_field = self.constlaw.compute_C_field(m) / self.constlaw.stiffness_scaling
-            # use flattened stiffness as micro
-            m = flatten_stiffness(C_field)
+        # print(x.detach().cpu().mean(dim=(-3, -2, -1, 0)), x.std(dim=(-3, -2, -1, 0)))
 
-        x = self.net(m)
+        # apply NN to encoded input
+        x = self.net(x)
 
         # push mean to equal zero (requires it to be corrected somewhere else)
         if self.config.enforce_mean:
@@ -140,50 +185,37 @@ class Localizer_DEQ(LocalizerBase):
         # deep-EQ solver
         self.deq = get_deq(config.deq_args)
 
-        # always input strain
-        self.num_strain_feats = 6
+        input_channels = self.count_input_channels()
 
-        # add channels as appropriate
-        if config.use_micro:
-            self.num_strain_feats += 2
-        if config.use_C_flat:
-            self.num_strain_feats += 21
-        if config.use_stress:
-            self.num_strain_feats += 6
-        if config.use_stress_polarization:
-            self.num_strain_feats += 6
-        if config.use_energy:
-            self.num_strain_feats += 1
-
-        channels_in = self.num_strain_feats
         if config.add_Green_iter:
             # add FFT prediction and features as well
-            channels_in *= 2
+            input_channels *= 2
 
-        # now make network either way and let lifting block do the hard work
-        self.forward_net = make_model(
-            config, input_channels=channels_in, output_channels=6
+        self.forward_net = FNO(
+            in_channels=input_channels,
+            out_channels=6,
+            **config.fno_args,
         )
 
-    def encode_micro_strain(self, strain, C_field, m):
-        # encode microstructure and strain field
-        # always use strain as input
-        feat = [strain]
+    def encode_micro_strain(self, m, C_field, strain):
 
-        # precompute stress for convenience
-        stress = self.constlaw(strain, C_field)
+        feat = self.build_nonthermo_features(m, C_field)
 
-        if self.config.use_micro:
-            # append all phases for convenience
-            feat.append(m)
+        # do we use current strain as feature?
+        if self.config.use_strain:
+            feat.append(strain)
 
-        if self.config.use_C_flat:
-            # append all phases for convenience
-            feat.append(flatten_stiffness(C_field))
+        if self.config.use_stress or self.config.use_energy:
+            # precompute stress for convenience
+            stress = self.constlaw(C_field, strain)
 
         # build up features
         if self.config.use_stress:
             feat.append(stress)
+
+        if self.config.use_energy:
+            strain_energy = compute_strain_energy(strain, stress)
+            feat.append(strain_energy)
 
         if self.config.use_stress_polarization:
             stress_polar = self.constlaw.stress_pol(strain, C_field, scaled=True)
@@ -191,52 +223,24 @@ class Localizer_DEQ(LocalizerBase):
             # stress_polar *= -1
             feat.append(stress_polar)
 
-        if self.config.use_energy:
-            strain_energy = compute_strain_energy(strain, stress)
-            feat.append(strain_energy)
-
-        # if self.config.use_bc_strain:
-        #     eps_avg = self.compute_init_scaled_strain(m, None)
-        #     feat.append(eps_avg )
-
         # collect features into a vector
-        # print([f.shape for f in feat])
         nn_features = torch.concatenate(feat, dim=1)
 
         # now return dense feat vec
         return nn_features
 
-    def compute_init_scaled_strain(self, micro, init_guess):
-        # micro should be
-        # get initial strain field
-        if init_guess is not None:
-            return init_guess
-        eps_shape = list(micro.shape)
-        # eps should be b * 6 * xyz (since 6 indep strain components)
-        # TODO get # voxels in a more stable fashion
-        Nx = eps_shape[-2]
-
-        # broadcast avg strain to all locations
-        init_strain = (
-            micro.new_ones((eps_shape[0], 6, Nx, Nx, Nx)) * self.scaled_average_strain
-        )
-
-        return init_strain
-
     def single_iter_simple(self, strain_k, C_field, m):
         """
         Given a stiffness tensor C corresponding to micro m, update the current strain field using the neural net
         """
-        z_k = self.encode_micro_strain(strain_k, C_field, m)
-
-        # print_activ_map(z_k.detach())
+        z_k = self.encode_micro_strain(m, C_field, strain_k)
 
         if self.config.add_Green_iter:
             # get moulinec-suquet update
             # NOTE: block gradients flowing through this step (e.g. don't differentiate through MS step)
             # hopefully this stabilizes training
             eps_ms = self.greens_op.forward(strain_k, C_field)
-            z_ms = self.encode_micro_strain(eps_ms, C_field, m)
+            z_ms = self.encode_micro_strain(m, C_field, eps_ms)
 
             # stack on M-S features after current features
             z_k = torch.concatenate([z_k, z_ms], dim=1)
@@ -287,11 +291,8 @@ class Localizer_DEQ(LocalizerBase):
 
         out_scale = self.constlaw.strain_scaling if self.config.scale_output else 1
 
-        if self.config.use_fancy_iter:
-            # only project out strain if needed
-            strain_pred = hstar[:, :6] * out_scale
-        else:
-            strain_pred = hstar * out_scale
+        # now project out output and rescale appropriately
+        strain_pred = hstar * out_scale
 
         if self.config.return_deq_trace:
             # just return raw deq trace without postprocessing

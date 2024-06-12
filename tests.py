@@ -41,8 +41,8 @@ C_ROT_MOOSE = torch.tensor(
     ]
 )
 
-CHECK_TEST = "checkpoints/model_fno_deq_noenergy_17.7M_s31_best.ckpt"
-CONF_TEST = "configs/fno_deq_noenergy.json"
+CHECK_TEST = "checkpoints/model_fno_deq_17.7M_s31_best.ckpt"
+CONF_TEST = "configs/fno_deq.json"
 
 
 def batched_vector_grad(a):
@@ -407,7 +407,7 @@ def test_euler_pred():
 
     C_field = model.constlaw.compute_C_field(euler_ang[None])
 
-    stress_pred = model.constlaw.forward(strain_pred, C_field)
+    stress_pred = model.constlaw(C_field, strain_pred)
 
     homog_pred = est_homog(strain_pred, stress_pred, (0, 0)).squeeze()
 
@@ -545,7 +545,7 @@ def test_FFT_iters_crystal():
     eps_0 = eps
     for i in range(10):
         eps = G.forward(eps, C_field)
-        sig = constlaw(eps, C_field)
+        sig = constlaw(C_field, eps)
         equib_err, compat_err = G.compute_residuals(eps, sig)
         if i % 1 == 0:
             print(
@@ -622,7 +622,7 @@ def test_FFT_iters_2phase():
         f"FEA Residuals, div sigma = {FEA_div_sigma_FT:4f}, equi err = {FEA_equi_err:4f}, compat err = {FEA_compat_err:4f}"
     )
 
-    sigma_init = constlaw.forward(eps, C_field)
+    sigma_init = constlaw(C_field, eps)
 
     init_resid_equi, init_resid_compat = G.compute_residuals(eps, sigma_init)
     init_div_sigma_FT = stressdiv(sigma_init).mean()
@@ -636,7 +636,7 @@ def test_FFT_iters_2phase():
     # get initial field with correct mean (not in equilib)
     eps_rand = torch.randn(1, 6, N, N, N)
     eps_rand = eps + eps_rand - eps_rand.mean(dim=(-3, -2, -1), keepdim=True)
-    sigma_rand = constlaw.forward(eps_rand, C_field)
+    sigma_rand = constlaw(C_field, eps_rand)
 
     rand_resid_equi, rand_resid_compat = G.compute_residuals(eps_rand, sigma_rand)
     rand_div_sigma_FT = stressdiv(sigma_rand).mean()
@@ -658,7 +658,7 @@ def test_FFT_iters_2phase():
 
     for i in range(20):
         eps = G.forward(eps, C_field)
-        sigma = constlaw.forward(eps, C_field)
+        sigma = constlaw(C_field, eps)
 
         resid_equi, resid_compat = G.compute_residuals(eps, sigma)
 
@@ -723,6 +723,7 @@ def test_deq_convergence():
     # model = model.cuda()
     # required to get n_states to behave
     model.train()
+    model.pretraining = False
 
     print(config)
     print(model)
@@ -777,6 +778,8 @@ def test_deq_convergence():
 
 
 # test_FFT_iters_crystal()
+test_deq_convergence()
+test_euler_pred()
 test_constlaw()
 test_stiff_ref()
 test_mandel()

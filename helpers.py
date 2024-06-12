@@ -265,7 +265,7 @@ def check_constlaw(constlaw, micro, strain, stress):
 
     C_field = constlaw.compute_C_field(micro)
 
-    stress_comp = constlaw(strain, C_field)
+    stress_comp = constlaw(C_field, strain)
 
     err = (stress_comp - stress).abs()
 
@@ -316,7 +316,7 @@ def check_constlaw(constlaw, micro, strain, stress):
 
 
 def compute_quants(model, strain, C_field):
-    stress = model.constlaw(strain, C_field)
+    stress = model.constlaw(C_field, strain)
     stress_polar = model.constlaw.stress_pol(strain, C_field)
     energy = compute_strain_energy(strain, stress)
 

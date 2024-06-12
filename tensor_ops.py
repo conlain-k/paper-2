@@ -152,8 +152,6 @@ def batched_rotate(euler_ang, stiff_mat_base, passive=True):
     # get vector of rotation mats
     R = euler_angles_to_matrix(euler_ang, "ZXZ")
 
-    print(R.shape)
-
     # if passive:
     # flip 1st and 2nd indices (convert passive -> active) to match MOOSE
     # R = R.transpose(1, 2)

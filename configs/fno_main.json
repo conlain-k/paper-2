@@ -1,4 +1,3 @@
 {
-    "_description": "Base FNO solver",
-    "use_fno": true
+    "_description": "Base FNO solver"
 }
