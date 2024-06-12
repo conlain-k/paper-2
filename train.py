@@ -359,7 +359,7 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
     stress_loss_L2 = stress_err_norm.mean()
 
     stress_deriv_loss = deriv_loss(stress_err_norm)
-    stress_loss = stress_loss_L2 + stress_deriv_loss
+    stress_loss = stress_loss_L2  # + stress_deriv_loss
 
     strain_resid = (
         model.constlaw.C0_norm((strain_true - strain_pred))
@@ -525,18 +525,27 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
             / model.constlaw.strain_scaling
         )
 
-        # now average out over each instance in train set
-        LSE = LSE.sum() / len(eval_loader.dataset)
         LVE = mean_L1_error(VM_stress_pred, VM_stress_true) / VM_stress_true.abs().mean(
-            dim=(-3, -2, -1), keepdim=True
+            dim=(-3, -2, -1)
         )
+
+        # print(LVE.shape, LSE.shape)
         # print(mean_L1_error(VM_stress_pred, VM_stress_true))
         # print(VM_stress_true.abs().mean())
-        # now average out over each instance in train set
-        LVE = LVE.sum() / len(eval_loader.dataset)
+        # print(VM_stress_true.abs().mean(dim=(-3, -2, -1)))
 
-        L1_strain_err += LSE
-        L1_VM_stress_err += LVE
+        # print(VM_stress_pred.shape)
+        # print(LVE.shape, len(eval_loader.dataset))
+
+        # print(LVE)
+
+        # now average out over each instance in train set
+        L1_strain_err = L1_strain_err + LSE.sum()
+        L1_VM_stress_err = L1_VM_stress_err + LVE.sum()
+
+    # divide out # samples
+    L1_strain_err /= len(eval_loader.dataset)
+    L1_VM_stress_err /= len(eval_loader.dataset)
 
     # divide out number of batches (simple normalization)
     running_loss /= len(eval_loader)
