@@ -21,7 +21,7 @@ lam_stress = lam_stress / lam_sum
 lam_energy = lam_energy / lam_sum
 
 # residual error is usually small anyways, and we want our DEQ gradients to be accurate
-lam_resid = 1
+lam_resid = 10
 
 
 @dataclass
@@ -49,7 +49,7 @@ class Config:
 
     loader_args: dict = field(
         default_factory=lambda: {
-            DataMode.TRAIN: {"batch_size": 8, "shuffle": True, "num_workers": 1},
+            DataMode.TRAIN: {"batch_size": 16, "shuffle": True, "num_workers": 1},
             DataMode.VALID: {"batch_size": 256, "shuffle": False, "num_workers": 1},
             DataMode.TEST: {"batch_size": 256, "shuffle": False, "num_workers": 1},
         }
@@ -87,7 +87,7 @@ class Config:
         }
     )
 
-    grad_clip_mag: float = 1
+    grad_clip_mag: float = 10
     use_skip_update: bool = False
     scale_output: bool = True
     enforce_mean: bool = True

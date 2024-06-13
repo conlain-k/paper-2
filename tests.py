@@ -161,9 +161,9 @@ def test_fft_deriv():
 def prof_C_op():
     # profile stress computation using C and m
 
-    micros = torch.randn(128, 2, 31, 31, 31).cuda()
-    C_op = StrainToStress_2phase([1, 1000], [0.3, 0.3]).cuda()
-    strains = torch.randn(128, 6, 31, 31, 31).cuda()
+    micros = torch.randn(128, 2, 31, 31, 31)
+    C_op = StrainToStress_2phase([1, 1000], [0.3, 0.3])
+    strains = torch.randn(128, 6, 31, 31, 31)
 
     def time_op(f):
         torch.cuda.synchronize()
@@ -777,18 +777,18 @@ def test_deq_convergence():
 # test_FFT_iters_2phase()
 
 
+prof_C_op()
 # test_FFT_iters_crystal()
-test_deq_convergence()
-test_euler_pred()
-test_constlaw()
-test_stiff_ref()
-test_mandel()
-test_rotat()
-test_mat_vec_op()
+# test_deq_convergence()
+# test_euler_pred()
+# test_constlaw()
+# test_stiff_ref()
+# test_mandel()
+# test_rotat()
+# test_mat_vec_op()
 
 
 # test_euler_pred()
 # test_deq_convergence()
 # test_euler_ang()
-# prof_C_op()
 # test_fft_deriv()

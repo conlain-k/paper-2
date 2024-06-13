@@ -15,17 +15,16 @@
     "fno_args": {
         "modes": [
             16,
-            16,
             16
         ],
         "normalize": true,
         "activ_type": "gelu",
-        "init_weight_scale": 2,
+        "init_weight_scale": 0.1,
         "use_weight_norm": true,
         "resid_conn": true,
-        "latent_channels": 20,
+        "latent_channels": 24,
         "normalize_inputs": true,
         "projection_channels": 128
     },
-    "lr_max": 5e-4
+    "lr_max": 1e-3
 }

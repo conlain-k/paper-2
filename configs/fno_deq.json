@@ -16,15 +16,14 @@
     "deq_args": {
         "f_solver": "anderson",
         "b_solver": "anderson",
-        "f_max_iter": 12,
-        "b_max_iter": 12,
+        "f_max_iter": 16,
+        "b_max_iter": 16,
         "f_tol": 1e-4,
         "b_tol": 1e-5,
         "use_ift": true
     },
     "fno_args": {
         "modes": [
-            16,
             16,
             16
         ],
@@ -33,10 +32,10 @@
         "init_weight_scale": 0.1,
         "use_weight_norm": true,
         "resid_conn": true,
-        "latent_channels": 20,
+        "latent_channels": 24,
         "normalize_inputs": true,
         "projection_channels": 128
     },
-    "lr_max": 5e-4,
+    "lr_max": 1e-3,
     "num_epochs": 100
 }

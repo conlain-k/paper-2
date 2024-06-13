@@ -31,21 +31,6 @@ class StrainToStress_base(torch.nn.Module):
         self.stress_scaling = self.stiffness_scaling * self.strain_scaling
         self.energy_scaling = self.stress_scaling * self.strain_scaling
 
-    def compute_C_matrix(self, lamb, mu):
-        new_mat = torch.zeros((6, 6), dtype=torch.float32, requires_grad=False)
-        # set up tensor
-        for row in range(3):
-            # set up off-diag in this row
-            new_mat[row, :3] = lamb
-            # and diag entry
-            new_mat[row, row] = 2 * mu + lamb
-
-        for row in range(3, 6):
-            # set up last three diagonals
-            new_mat[row, row] = mu
-
-        return new_mat
-
     def stress_pol(self, strain, C_field, scaled=False):
         """
         Compute stress polarization (pass scaled=True if strains and C are scaled)
@@ -204,13 +189,6 @@ def stressdeviator(stress):
     stress_dev_mat[:, 2, 2] -= trace / 3
 
     return stress_dev_mat
-
-
-def YMP_to_Lame(E, nu):
-    # convert Young's modulus + Poisson Ratio -> Lamé coefficients
-    lamb = E * nu / ((1 + nu) * (1 - 2 * nu))
-    mu = E / (2 * (1 + nu))
-    return lamb, mu
 
 
 # given a batch of vector fields R^3 -> R^d, return the gradient for each batch and component
