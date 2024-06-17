@@ -29,10 +29,6 @@ class LocalizerBase(torch.nn.Module):
         # cache config
         self.config = config
 
-        # if in pretraining mode, don't perform certain normalizations
-        # this allows us to enforce constraints (e.g. average mean) without messing up early training
-        self.pretraining = True
-
     def count_input_channels(self):
         channels = 0
         # micro-type features
@@ -91,10 +87,6 @@ class LocalizerBase(torch.nn.Module):
     #     return eps
 
     def filter_result(self, x):
-        # no filter in pretraining
-        if self.pretraining:
-            return x
-
         # push mean to equal zero (requires it to be corrected somewhere else)
         if self.config.enforce_mean:
             x = self.enforce_zero_mean(x)
@@ -279,15 +271,11 @@ class Localizer_DEQ(LocalizerBase):
         else:
             iter_arg = None
 
-        if self.pretraining:
-            # just do 1 pass in pretrain mode (to quickly get main features)
-            hstar = F(h0)
-        else:
-            # solve FP over h system
-            sol, _ = self.deq(F, h0, solver_kwargs=iter_arg)
+        # solve FP over h system
+        sol, _ = self.deq(F, h0, solver_kwargs=iter_arg)
 
-            # print(info)
-            hstar = sol[-1]
+        # print(info)
+        hstar = sol[-1]
 
         out_scale = self.constlaw.strain_scaling if self.config.scale_output else 1
 

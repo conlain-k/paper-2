@@ -192,6 +192,7 @@ def prof_C_op():
     time_premul = time_op(op_premul)
 
     print(f"Simultaneous time is {time_simul:.3f}, premul time is {time_premul:.3f}")
+    print(f"Simultaneous time is {time_simul:.3f}, premul time is {time_premul:.3f}")
 
 
 def prof_C_op():
@@ -777,9 +778,9 @@ def test_deq_convergence():
 # test_FFT_iters_2phase()
 
 
+test_deq_convergence()
+test_FFT_iters_crystal()
 prof_C_op()
-# test_FFT_iters_crystal()
-# test_deq_convergence()
 # test_euler_pred()
 # test_constlaw()
 # test_stiff_ref()

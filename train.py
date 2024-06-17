@@ -364,7 +364,7 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
         model.constlaw.S0_norm((stress_true - stress_pred))
         / model.constlaw.energy_scaling
     )
-    stress_loss_L2 = stress_err_norm.mean()
+    stress_loss_L2 = stress_err_norm.mean().sqrt()
 
     stress_deriv_loss = deriv_loss(stress_err_norm)
     stress_loss = stress_loss_L2  # + stress_deriv_loss
@@ -374,7 +374,7 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
         / model.constlaw.energy_scaling
     )
 
-    strain_loss_L2 = strain_resid.mean()
+    strain_loss_L2 = strain_resid.mean().sqrt()
     strain_deriv_loss = deriv_loss(strain_resid) / 20.0
 
     strain_loss = strain_loss_L2  # + strain_deriv_loss
@@ -627,18 +627,18 @@ def train_model(model, config, train_loader, valid_loader):
     )
 
     for e in range(config.num_epochs):
-        # only pretrain for given # epochs
-        if e >= config.num_pretrain_epochs and model.pretraining:
-            print(f"\nDisabling pretrain mode at epoch {e}\n")
-            model.pretraining = False
-            # also rebuild optimizer to reset internal states / momentum
-            optimizer = torch.optim.Adam(
-                model.parameters(),
-                lr=optimizer.param_groups[0]["lr"],
-            )
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer, config.num_epochs, eta_min=1e-8
-            )
+        # # only pretrain for given # epochs
+        # if e >= config.num_pretrain_epochs and model.pretraining:
+        #     print(f"\nDisabling pretrain mode at epoch {e}\n")
+        #     model.pretraining = False
+        #     # also rebuild optimizer to reset internal states / momentum
+        #     optimizer = torch.optim.Adam(
+        #         model.parameters(),
+        #         lr=optimizer.param_groups[0]["lr"],
+        #     )
+        #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        #         optimizer, config.num_epochs, eta_min=1e-8
+        #     )
 
         print(DELIM)
 

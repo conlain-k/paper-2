@@ -156,7 +156,7 @@ class LocalizationDataset(Dataset):
         stress = torch.from_numpy(self.stress[index]).float()
         stress = abaqus_to_mandel(stress, fac=FAC_STRESS)
 
-        return X, strain, stress
+        return micro, strain, stress
 
 
 #
