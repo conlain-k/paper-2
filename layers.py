@@ -330,7 +330,7 @@ class ProjectionBlock(torch.nn.Module):
         hidden_channels=None,
         activ_type="gelu",
         use_weight_norm=False,
-        final_bias=False,
+        final_bias=True,
         normalize=False,
     ):
         super().__init__()

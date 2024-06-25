@@ -15,8 +15,8 @@
     "deq_args": {
         "f_solver": "anderson",
         "b_solver": "anderson",
-        "f_max_iter": 12,
-        "b_max_iter": 12,
+        "f_max_iter": 16,
+        "b_max_iter": 16,
         "f_tol": 1e-4,
         "b_tol": 1e-5,
         "use_ift": true
@@ -28,12 +28,13 @@
         ],
         "normalize": true,
         "activ_type": "gelu",
-        "init_weight_scale": 1,
+        "init_weight_scale": 0.01,
         "use_weight_norm": true,
         "resid_conn": true,
         "latent_channels": 24,
         "normalize_inputs": false,
-        "projection_channels": 128
+        "projection_channels": 128,
+        "use_mlp_lifting": true
     },
     "lr_max": 1e-3
 }

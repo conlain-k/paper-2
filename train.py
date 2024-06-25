@@ -366,6 +366,7 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
     )
     stress_loss_L2 = stress_err_norm.mean()
 
+    stress_deriv_loss = deriv_loss(stress_err_norm)
     stress_loss = stress_loss_L2  # + stress_deriv_loss
 
     strain_resid = (
@@ -373,19 +374,27 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
         / model.constlaw.energy_scaling
     )
 
-    strain_loss = ((strain_true - strain_pred) ** 2).sum(dim=1).mean() / (
-        model.constlaw.strain_scaling**2
-    )
-    stress_loss = ((stress_true - stress_pred) ** 2).sum(dim=1).mean() / (
-        model.constlaw.stress_scaling**2
-    )
+    strain_loss_L2 = strain_resid.mean()
+    strain_deriv_loss = deriv_loss(strain_resid) / 20.0
+
+    strain_loss = strain_loss_L2  # + strain_deriv_loss
 
     energy_loss = (
-        compute_strain_energy(
-            strain_true - strain_pred, stress_true - stress_pred
-        ).mean()
+        compute_energy_loss(strain_true - strain_pred, C_field, add_deriv=True).mean()
         / model.constlaw.energy_scaling
     )
+
+    # energy_diff = (
+    #     compute_strain_energy(
+    #         strain_true - strain_pred, stress_true - stress_pred
+    #     ).mean()
+    #     / model.constlaw.energy_scaling
+    # )
+
+    # print(
+    #     f"L2: strain {strain_loss_L2:4f} stress {stress_loss_L2:4f} energy {energy_loss:4f}"
+    # )
+    # print(f"H1: strain {strain_deriv_loss:4f} stress {stress_deriv_loss:4f}")
 
     resid_loss = torch.as_tensor(0.0)
     compat_loss = torch.as_tensor(0.0)
@@ -618,18 +627,6 @@ def train_model(model, config, train_loader, valid_loader):
     )
 
     for e in range(config.num_epochs):
-        # # only pretrain for given # epochs
-        # if e >= config.num_pretrain_epochs and model.pretraining:
-        #     print(f"\nDisabling pretrain mode at epoch {e}\n")
-        #     model.pretraining = False
-        #     # also rebuild optimizer to reset internal states / momentum
-        #     optimizer = torch.optim.Adam(
-        #         model.parameters(),
-        #         lr=optimizer.param_groups[0]["lr"],
-        #     )
-        #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        #         optimizer, config.num_epochs, eta_min=1e-8
-        #     )
 
         print(DELIM)
 

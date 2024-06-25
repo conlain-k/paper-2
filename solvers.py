@@ -251,6 +251,33 @@ class Localizer_DEQ(LocalizerBase):
 
         return strain_kp
 
+    def _compute_trajectory(self, m, num_iters=32):
+        """hook into deq implementation to return full solver trajectory"""
+        C_field = self.constlaw.compute_C_field(m) / self.constlaw.stiffness_scaling
+
+        # just iterate over strain dim directly
+        F = lambda h: self.single_iter_simple(h, C_field, m)
+        h0 = self.compute_init_scaled_strain(m, None)
+
+        # indexing starts at 3 in torchdeq (1-based, plus ignores first two iterates)
+        indexing = torch.arange(3, num_iters + 3).tolist()
+        with torch.inference_mode():
+            # call into deq solver directly
+            ret = self.deq.f_solver(
+                F, x0=h0, indexing=indexing, max_iter=num_iters + 3, tol=0
+            )
+
+        z, traj, info = ret
+
+        print("traj has length", len(traj))
+        print(info)
+
+        out_scale = self.constlaw.strain_scaling if self.config.scale_output else 1
+
+        traj = [s * out_scale for s in traj]
+
+        return traj
+
     def forward(self, m):
 
         C_field = self.constlaw.compute_C_field(m) / self.constlaw.stiffness_scaling
@@ -282,12 +309,8 @@ class Localizer_DEQ(LocalizerBase):
         # now project out output and rescale appropriately
         strain_pred = hstar * out_scale
 
-        if self.config.return_deq_trace:
-            # just return raw deq trace without postprocessing
-            return [s * out_scale for s in sol]
-
         # return model and residual
-        elif self.config.return_resid:
+        if self.config.return_resid:
             resid = (F(hstar) - hstar) * out_scale
             return strain_pred, resid
 
