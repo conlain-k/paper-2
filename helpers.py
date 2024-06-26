@@ -284,7 +284,7 @@ def check_constlaw(constlaw, micro, strain, stress):
 
     print(f"Err mean {err.mean()} std {err.std()} min {err.min()} max {err.max()}")
 
-    print(f"Each component err mean is: {err.mean(dim=(0, -1, -2, -3))}")
+    # print(f"Each component err mean is: {err.mean(dim=(0, -1, -2, -3))}")
 
     plot_pred(
         -1,

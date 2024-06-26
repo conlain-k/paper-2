@@ -19,6 +19,15 @@ parser = argparse.ArgumentParser(prog="main.py", description="Train localization
 
 parser.add_argument("-c", "--config_override", default=None)
 parser.add_argument("-E", "--use_ema", action="store_true")
+parser.add_argument(
+    "--init_weight_scale",
+    help="Initial weight scale to use",
+    default=None,
+    type=float,
+)
+parser.add_argument(
+    "--lr_max", help="Initial learning rate to use", default=None, type=float
+)
 
 torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.enabled = True
@@ -107,6 +116,11 @@ if __name__ == "__main__":
         config = Config(**conf_args, use_EMA=args.use_ema)
     else:
         config = Config()
+
+    if args.lr_max:
+        config.lr_max = args.lr_max
+    if args.init_weight_scale:
+        config.fno_args["init_weight_scale"] = args.init_weight_scale
 
     model = make_localizer(config)
     model.setConstParams(E_VALS, NU_VALS, E_BAR)

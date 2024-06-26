@@ -237,7 +237,6 @@ class Localizer_DEQ(LocalizerBase):
         if self.config.use_stress_polarization:
             stress_polar = self.constlaw.stress_pol(strain, C_field, scaled=True)
             # negate stress polarization to get positive-ish values
-            # stress_polar *= -1
             feat.append(stress_polar)
 
         # collect features into a vector

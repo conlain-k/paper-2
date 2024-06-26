@@ -33,7 +33,7 @@ class FNO(torch.nn.Module):
                 latent_channels,
                 hidden_channels=final_projection_channels,
                 activ_type=activ_type,
-                use_weight_norm=use_weight_norm,
+                use_weight_norm=False,
             )
         else:
             self.lift = torch.nn.Conv3d(in_channels, latent_channels, kernel_size=1)
@@ -43,7 +43,7 @@ class FNO(torch.nn.Module):
             out_channels,
             hidden_channels=final_projection_channels,
             activ_type=activ_type,
-            use_weight_norm=use_weight_norm,
+            use_weight_norm=False,
             final_bias=False,
         )
 
@@ -134,10 +134,7 @@ class FNO_Block(torch.nn.Module):
 
         x = self.norm(x) if self.normalize else x
 
-        x1 = self.conv(x)
-
-        x2 = self.filt(x)
-        x = self.activ(x1 + x2)
+        x = self.activ(self.conv(x) + self.filt(x))
 
         if self.resid_conn:
             # residual connection

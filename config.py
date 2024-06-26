@@ -6,13 +6,9 @@ import os
 DELIM = "-" * 40
 
 # coefficients for balancing loss functions
-lam_strain = 0
-lam_stress = 0
+lam_strain = 1
+lam_stress = 1
 lam_energy = 1
-
-
-# penalize compatibility error heavily
-lam_compat = 0
 
 lam_sum = lam_strain + lam_stress + lam_energy
 
@@ -96,12 +92,11 @@ class Config:
     lam_strain: float = lam_strain
     lam_stress: float = lam_stress
     lam_energy: float = lam_energy
-    lam_compat: float = lam_compat
     lam_resid: float = lam_resid
 
     # use regular L2 norm (rather than squared)
     # adds cost / complexity, but makes balancing terms easier
-    use_sqrt_loss: bool = True
+    use_sqrt_loss: bool = False
 
     def __post_init__(self):
         conf_base = os.path.basename(self._conf_file)
@@ -134,7 +129,6 @@ class LossSet:
     stress_loss: float = 0
     energy_loss: float = 0
     resid_loss: float = 0
-    compat_loss: float = 0
 
     def __add__(self, other):
         # total_loss = self.total_loss + other.total_loss
@@ -142,7 +136,6 @@ class LossSet:
         stress_loss = self.stress_loss + other.stress_loss
         energy_loss = self.energy_loss + other.energy_loss
         resid_loss = self.resid_loss + other.resid_loss
-        compat_loss = self.compat_loss + other.compat_loss
 
         return LossSet(
             self.config,
@@ -150,7 +143,6 @@ class LossSet:
             stress_loss,
             energy_loss,
             resid_loss,
-            compat_loss,
         )
 
     def __truediv__(self, x):
@@ -158,7 +150,6 @@ class LossSet:
         stress_loss = self.stress_loss / x
         energy_loss = self.energy_loss / x
         resid_loss = self.resid_loss / x
-        compat_loss = self.compat_loss / x
 
         return LossSet(
             self.config,
@@ -166,22 +157,19 @@ class LossSet:
             stress_loss,
             energy_loss,
             resid_loss,
-            compat_loss,
         )
 
     def compute_total(self):
         # compute "total" loss metric as weighted average
-        loss = 0
+        loss = torch.Tensor().to(self.strain_loss.device)
         if lam_strain > 0:
-            loss += lam_strain * self.strain_loss
+            loss = loss + lam_strain * self.strain_loss
         if lam_stress > 0:
-            loss += lam_stress * self.stress_loss
+            loss = loss + lam_stress * self.stress_loss
         if lam_energy > 0:
-            loss += lam_energy * self.energy_loss
-        if lam_compat > 0:
-            loss += lam_compat * self.compat_loss
+            loss = loss + lam_energy * self.energy_loss
         if self.config.use_deq:
-            loss += lam_resid * self.resid_loss
+            loss = loss + lam_resid * self.resid_loss
 
         return loss
 
@@ -192,7 +180,6 @@ class LossSet:
             self.stress_loss.detach(),
             self.energy_loss.detach(),
             self.resid_loss.detach(),
-            self.compat_loss.detach(),
         )
 
     def to_dict(self):
@@ -203,8 +190,7 @@ class LossSet:
             "stress_loss": self.stress_loss,
             "energy_loss": self.energy_loss,
             "resid_loss": self.resid_loss,
-            "compat_loss": self.compat_loss,
         }
 
     def __repr__(self):
-        return f"strain loss is {self.strain_loss:.5}, stress loss is {self.stress_loss:.5}, energy loss is {self.energy_loss:.5}, resid loss is {self.resid_loss:.5}, compat loss is {self.compat_loss:.5}"
+        return f"strain loss is {self.strain_loss:.5}, stress loss is {self.stress_loss:.5}, energy loss is {self.energy_loss:.5}, resid loss is {self.resid_loss:.5}"
