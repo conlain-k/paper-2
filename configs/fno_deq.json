@@ -3,7 +3,7 @@
     "use_deq": true,
     "use_micro": false,
     "use_strain": true,
-    "use_bc_strain": false,
+    "use_bc_strain": true,
     "use_stress": true,
     "use_stress_polarization": true,
     "use_energy": true,
@@ -34,7 +34,8 @@
         "latent_channels": 24,
         "normalize_inputs": false,
         "projection_channels": 128,
-        "use_mlp_lifting": true
+        "use_mlp_lifting": true,
+        "init_type": "normal"
     },
     "lr_max": 1e-3
 }

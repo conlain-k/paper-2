@@ -111,6 +111,10 @@ class Config:
     lam_compat: float = lam_compat
     lam_resid: float = lam_resid
 
+    # use regular L2 norm (rather than squared)
+    # adds cost / complicaiton, but makes balancing terms easier
+    use_sqrt_loss: bool = True
+
     def __post_init__(self):
         conf_base = os.path.basename(self._conf_file)
         conf_base, _ = os.path.splitext(conf_base)

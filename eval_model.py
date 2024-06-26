@@ -67,8 +67,8 @@ if __name__ == "__main__":
 
     # load in saved weigths
     load_checkpoint(args.checkpoint_file, model)
-
-    model = model.to(config.device)
+    # send model to device
+    model = model.to(DEVICE)
     model.eval()
 
     # model = torch.compile(model)

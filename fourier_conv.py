@@ -25,6 +25,7 @@ class SpectralConv3d(torch.nn.Module):
         modes2,
         modes3,
         scale_fac=1,
+        init_type="normal",
     ):
         super(SpectralConv3d, self).__init__()
 
@@ -37,10 +38,17 @@ class SpectralConv3d(torch.nn.Module):
 
         self.scale = scale_fac / (in_channels * out_channels)
 
+        if init_type == "normal":
+            init_func = torch.randn
+        elif init_type == "uniform":
+            init_func = torch.rand
+        else:
+            raise RuntimeError(f"Error: invalid initialization scheme {init_type}")
+
         # weight start uniformly between 0 and 1
         self.weights = torch.nn.Parameter(
             self.scale
-            * torch.rand(
+            * init_func(
                 self.in_channels,
                 self.out_channels,
                 2 * self.modes1 - 1,

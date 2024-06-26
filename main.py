@@ -108,12 +108,10 @@ if __name__ == "__main__":
     else:
         config = Config()
 
-    config.device = DEVICE
-
     model = make_localizer(config)
     model.setConstParams(E_VALS, NU_VALS, E_BAR)
 
-    model = model.cuda()
+    model = model.to(DEVICE)
     # profile_forward(model)
 
     print(DELIM)
