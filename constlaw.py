@@ -212,13 +212,6 @@ def stressdeviator(stress):
     return stress_dev_mat
 
 
-def YMP_to_Lame(E, nu):
-    # convert Young's modulus + Poisson Ratio -> Lamé coefficients
-    lamb = E * nu / ((1 + nu) * (1 - 2 * nu))
-    mu = E / (2 * (1 + nu))
-    return lamb, mu
-
-
 # given a batch of vector fields R^3 -> R^d, return the gradient for each batch and component
 def batched_vector_FFT_grad(a, disc=False):
     # assumes f is [b x d x i x j x k]

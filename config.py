@@ -6,9 +6,9 @@ import os
 DELIM = "-" * 40
 
 # coefficients for balancing loss functions
-lam_strain = 1
-lam_stress = 1
-lam_energy = 0
+lam_strain = 0
+lam_stress = 0
+lam_energy = 1
 
 
 # penalize compatibility error heavily
@@ -21,7 +21,7 @@ lam_stress = lam_stress / lam_sum
 lam_energy = lam_energy / lam_sum
 
 # residual error is usually small anyways, and we want our DEQ gradients to be accurate
-lam_resid = 100
+lam_resid = 1
 
 
 @dataclass
@@ -43,7 +43,7 @@ class Config:
     use_energy: bool = False
     use_FFT_resid: bool = False
 
-    num_epochs: int = 100
+    num_epochs: int = 200
     lr_max: float = 1e-3
 
     loader_args: dict = field(
@@ -59,21 +59,10 @@ class Config:
 
     # Should we use a fixed maximum # iters, or randomize over training
     deq_randomize_max: bool = True
-    deq_min_iter: int = 5
+    deq_min_iter: int = 4
 
-    num_pretrain_epochs: int = 0
-
-    deq_args: dict = field(
-        default_factory=lambda: {
-            "f_solver": None,
-            "b_solver": None,
-            "f_max_iter": None,
-            "b_max_iter": None,
-            "f_tol": None,
-            "b_tol": None,
-            "use_ift": None,
-        }
-    )
+    # passthrough args to DEQ
+    deq_args: dict = field(default_factory=lambda: {})
     fno_args: dict = field(
         default_factory=lambda: {
             "modes": None,
@@ -86,11 +75,7 @@ class Config:
         }
     )
 
-    # whether to output strain or displacement
-    # output_displacement: bool = False
-    # compute_compat_err: bool = True
-
-    grad_clip_mag: float = 10
+    grad_clip_mag: float = 1
     use_skip_update: bool = False
     scale_output: bool = True
     enforce_mean: bool = True
@@ -113,6 +98,10 @@ class Config:
     lam_energy: float = lam_energy
     lam_compat: float = lam_compat
     lam_resid: float = lam_resid
+
+    # use regular L2 norm (rather than squared)
+    # adds cost / complexity, but makes balancing terms easier
+    use_sqrt_loss: bool = True
 
     def __post_init__(self):
         conf_base = os.path.basename(self._conf_file)

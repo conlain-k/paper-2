@@ -115,6 +115,13 @@ def delta(i, j):
     return int(i == j)
 
 
+def YMP_to_Lame(E, nu):
+    # convert Young's modulus + Poisson Ratio -> Lamé coefficients
+    lamb = E * nu / ((1 + nu) * (1 - 2 * nu))
+    mu = E / (2 * (1 + nu))
+    return lamb, mu
+
+
 def isotropic_mandel66(lamb, mu):
     # extract coefficients and use the fact that isotropic is a subset of cubic
     return cubic_mandel66(2 * mu + lamb, lamb, mu)
@@ -132,7 +139,7 @@ def cubic_mandel66(C11, C12, C44):
 
     for row in range(3, 6):
         # set up last three diagonals
-        # do not scale by mandel factor!!! for some reason this breaks things / makes the shear terms wrong
+        # mandel fac balances sqrt2 in strain and stress
         new_mat[row, row] = C44 * 2
 
     return new_mat

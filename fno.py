@@ -20,27 +20,31 @@ class FNO(torch.nn.Module):
         activ_type="gelu",
         use_weight_norm=False,
         normalize_inputs=False,
+        use_mlp_lifting=False,
         modes=(10, 10),
         **kwargs,
     ):
         super().__init__()
         # just use a regular conv for lift
-        self.lift = torch.nn.Conv3d(in_channels, latent_channels, kernel_size=1)
 
-        # self.lift = ProjectionBlock(
-        #     in_channels,
-        #     latent_channels,
-        #     hidden_channels=final_projection_channels,
-        #     activ_type=activ_type,
-        #     use_weight_norm=False,
-        # )
+        if use_mlp_lifting:
+            self.lift = ProjectionBlock(
+                in_channels,
+                latent_channels,
+                hidden_channels=final_projection_channels,
+                activ_type=activ_type,
+                use_weight_norm=use_weight_norm,
+            )
+        else:
+            self.lift = torch.nn.Conv3d(in_channels, latent_channels, kernel_size=1)
 
         self.proj = ProjectionBlock(
             latent_channels,
             out_channels,
             hidden_channels=final_projection_channels,
             activ_type=activ_type,
-            use_weight_norm=False,
+            use_weight_norm=use_weight_norm,
+            final_bias=False,
         )
 
         blocks = []
@@ -68,16 +72,17 @@ class FNO(torch.nn.Module):
 
         if self.normalize_inputs:
             x = self.input_norm(x)
+
+        # lift into latent space
         x = self.lift(x)
 
         for block in self.blocks:
             # apply FNO blocks sequentially
             x = block(x)
 
-        # also normalize output of FNO chain
-        # x = self.input_norm(x)
-        # now do two projection steps, with an activation in the middle
+        # now project onto strain field
         x = self.proj(x)
+
         return x
 
 
@@ -91,7 +96,6 @@ class FNO_Block(torch.nn.Module):
         normalize,
         init_weight_scale,
         resid_conn,
-        use_MLP,
         **kwargs,
     ):
         super().__init__()
@@ -119,20 +123,7 @@ class FNO_Block(torch.nn.Module):
 
         self.activ = get_activ(activ_type, latent_channels)
 
-        self.use_MLP = use_MLP
-
-        if self.use_MLP:
-
-            self.MLP = ProjectionBlock(
-                latent_channels,
-                latent_channels,
-                hidden_channels=latent_channels,
-                activ_type=activ_type,
-                use_weight_norm=use_weight_norm,
-                final_bias=True,
-            )
-
-        if self.normalize:
+        if normalize:
             self.norm = torch.nn.GroupNorm(1, latent_channels)
 
     # just the middle bit of an FNO
@@ -144,8 +135,6 @@ class FNO_Block(torch.nn.Module):
         x = self.norm(x) if self.normalize else x
 
         x1 = self.conv(x)
-        if self.use_MLP:
-            x1 = self.MLP(x1)
 
         x2 = self.filt(x)
         x = self.activ(x1 + x2)

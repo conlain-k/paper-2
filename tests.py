@@ -15,6 +15,10 @@ from h5py import File
 from main import load_data
 
 import numpy as np
+import matplotlib.ticker as tck
+
+
+PLOT_IND_BAD = 1744
 
 BS = 32
 N = 31
@@ -41,7 +45,7 @@ C_ROT_MOOSE = torch.tensor(
     ]
 )
 
-CHECK_TEST = "checkpoints/model_fno_deq_17.7M_s31_best.ckpt"
+CHECK_TEST = "checkpoints/fno_deq_best.ckpt"
 CONF_TEST = "configs/fno_deq.json"
 
 
@@ -161,9 +165,9 @@ def test_fft_deriv():
 def prof_C_op():
     # profile stress computation using C and m
 
-    micros = torch.randn(128, 2, 31, 31, 31).cuda()
-    C_op = StrainToStress_2phase([1, 1000], [0.3, 0.3]).cuda()
-    strains = torch.randn(128, 6, 31, 31, 31).cuda()
+    micros = torch.randn(128, 2, 31, 31, 31)
+    C_op = StrainToStress_2phase([1, 1000], [0.3, 0.3])
+    strains = torch.randn(128, 6, 31, 31, 31)
 
     def time_op(f):
         torch.cuda.synchronize()
@@ -191,6 +195,7 @@ def prof_C_op():
     time_simul = time_op(op_simul)
     time_premul = time_op(op_premul)
 
+    print(f"Simultaneous time is {time_simul:.3f}, premul time is {time_premul:.3f}")
     print(f"Simultaneous time is {time_simul:.3f}, premul time is {time_premul:.3f}")
 
 
@@ -350,25 +355,22 @@ def test_euler_pred():
         "EulerAngles"
     ][:]
 
-    euler_ang = torch.from_numpy(euler_ang).cuda()
+    Z = 2 * C44 / (C11 - C12)
 
-    checkpoint_file = "checkpoints/fno_deq_best.ckpt"
-    checkpoint_file = "checkpoints/model_fno_deq_17.7M_s31_best.ckpt"
+    print(f"Zener ratio is {Z:.2f}")
 
-    conf_file = "configs/fno_deq.json"
-
-    checkpoint_file = "checkpoints/model_fno_deq_hybrid_17.7M_s31_best.ckpt"
-    conf_file = "configs/fno_deq_hybrid.json"
+    euler_ang = torch.from_numpy(euler_ang)
+    # euler_ang = euler_ang.cuda()
 
     conf_args = load_conf_override(CONF_TEST)
-    # conf_args["use_stress_polarization"] = True
-    # conf_args["use_energy"] = True
     # print(conf_args)
     config = Config(**conf_args)
     config.num_voxels = 62
 
     # no need to return residual
     config.return_resid = False
+    config.fno_args["normalize_inputs"] = False
+    config.fno_args["use_mlp_lifting"] = True
 
     model = make_localizer(config)
 
@@ -385,7 +387,7 @@ def test_euler_pred():
     model.greens_op = GreensOp(model.constlaw, 62)
 
     # make sure we're ready to eval
-    model = model.cuda()
+    # model = model.cuda()
     model.eval()
 
     import time
@@ -424,7 +426,7 @@ def test_euler_pred():
             torch.as_tensor(f["stress"][:])
             .reshape(stress_pred.shape)
             .to(stress_pred.device)
-        )
+        ) / 10.0
         homog_true = est_homog(strain_true, stress_true, (0, 0)).squeeze()
 
     print("homog shape", homog_true.shape)
@@ -457,11 +459,11 @@ def test_euler_pred():
     # stress_11_min = min(stress_pred[0, 0].min(), stress_true[0, 0].min())
     # stress_11_max = max(stress_pred[0, 0].max(), stress_true[0, 0].max())
 
-    strain_11_min = None  # strain_true[0, 0].min()
-    strain_11_max = None  # strain_true[0, 0].max()
+    strain_11_min = strain_true[0, 0].min()
+    strain_11_max = strain_true[0, 0].max()
 
-    stress_11_min = None  # stress_true[0, 0].min()
-    stress_11_max = None  # stress_true[0, 0].max()
+    stress_11_min = stress_true[0, 0].min()
+    stress_11_max = stress_true[0, 0].max()
 
     plot_cube(
         strain_pred[0, 0, :, :, :].detach().cpu(),
@@ -495,8 +497,6 @@ def test_euler_pred():
 
     plot_cube(C_field[0, 0, 0, :, :, :].detach().cpu(), "d3d_C11.png", cmap="coolwarm")
 
-    print("\t\tHHHH", C_field[0, 0, 0, :, :, :])
-    print(C_field[0, 0, 0, :, :, :].shape)
     plot_cube(
         euler_ang[..., 0].detach().cpu(),
         "euler_ang.png",
@@ -536,6 +536,16 @@ def test_FFT_iters_crystal():
 
     mpl.rcParams["figure.facecolor"] = "white"
 
+    # now compare to true solution
+    true_resp_file = "/storage/home/hcoda1/3/ckelly84/scratch/poly_stress_strain.h5"
+
+    with h5py.File(true_resp_file, "r") as f:
+        strain_true = torch.as_tensor(f["strain"][:]).reshape(eps.shape).to(eps.device)
+        stress_true = torch.as_tensor(f["stress"][:]).reshape(eps.shape).to(eps.device)
+        homog_true = est_homog(strain_true, stress_true, (0, 0)).squeeze()
+
+    print(f"True Cstar {homog_true:4f}")
+
     if torch.cuda.is_available():
         C_field = C_field.cuda()
         eps = eps.cuda()
@@ -548,8 +558,9 @@ def test_FFT_iters_crystal():
         sig = constlaw(C_field, eps)
         equib_err, compat_err = G.compute_residuals(eps, sig)
         if i % 1 == 0:
+            Cstar = est_homog(eps, sig, (0, 0)).squeeze()
             print(
-                f"Iter {i} equib: {constlaw.C0_norm(equib_err).mean()} compat {constlaw.C0_norm(compat_err).mean()}"
+                f"Iter {i} Cstar: {Cstar:4f}, equib: {constlaw.C0_norm(equib_err).mean()} compat {constlaw.C0_norm(compat_err).mean()}"
             )
             plot_cube(
                 eps[0, 0].detach().cpu(), savedir=f"FFT_eps_{i}.png", cmap="coolwarm"
@@ -699,78 +710,91 @@ def test_FFT_iters_2phase():
 
 
 def test_deq_convergence():
-    checkpoint_file = "checkpoints/fno_deq_best.ckpt"
-    checkpoint_file = "checkpoints/model_fno_deq_17.7M_s31_best.ckpt"
-    conf_file = "configs/fno_deq.json"
-
-    checkpoint_file = "checkpoints/model_fno_deq_hybrid_17.7M_s31_best.ckpt"
-    conf_file = "configs/fno_deq_hybrid.json"
-
     conf_args = load_conf_override(CONF_TEST)
 
     config = Config(**conf_args)
     config.return_deq_trace = True
-    N_MAX = 32
+    N_MAX = 16
 
-    config.deq_args["f_max_iter"] = N_MAX
-    config.deq_args["n_states"] = N_MAX
-    config.deq_args["f_solver"] = "anderson"
-    config.deq_args["f_tol"] = 1e-8
+    config.fno_args["normalize_inputs"] = False
+    config.fno_args["use_mlp_lifting"] = True
+    # config.deq_args["f_solver"] = "broyden"
+    # config.deq_args["f_solver"] = "fixed_point_iter"
 
     model = make_localizer(config)
     model.setConstParams(E_VALS, NU_VALS, E_BAR)
     load_checkpoint(CHECK_TEST, model, strict=False)
     # model = model.cuda()
     # required to get n_states to behave
-    model.train()
-    model.pretraining = False
 
     print(config)
     print(model)
 
     datasets, _ = collect_datasets("paper2_smooth", 100.0)
-    dataset = LocalizationDataset(**datasets[DataMode.TRAIN])
-    m, eps_FEA, sigma_FEA = dataset[0:1]
+    dataset = LocalizationDataset(**datasets[DataMode.VALID])
+    m, eps_FEA, sigma_FEA = dataset[PLOT_IND_BAD : PLOT_IND_BAD + 1]
+
+    C_field = model.constlaw.compute_C_field(m)
+
+    VM_FEA = VMStress(sigma_FEA)
 
     print(model.pretraining)
 
     print("Evaluating model")
     # don't store any gradients
     with torch.inference_mode():
-        strain_trace = model(m)
+        strain_trace = model._compute_trajectory(m, num_iters=N_MAX)
     print(strain_trace[0].shape)
     strain_trace = torch.stack(strain_trace, dim=0)
     print(strain_trace.shape)
 
     print("Computing errors")
     # compute L1 errors as well
-    errs = [
-        mean_L1_error(eps[0, 0], eps_FEA[0, 0]).cpu().numpy()
+    strain_errs = [
+        100
+        * mean_L1_error(eps[0, 0], eps_FEA[0, 0]).cpu().squeeze()
         / model.constlaw.strain_scaling
         for eps in strain_trace
     ]
 
-    print("L1 Strain errors is", errs)
-    # sum difference along each component
-    diff = (
-        torch.diff(strain_trace, dim=0)
-        .abs()
-        .mean(dim=(-3, -2, -1))
-        .squeeze()
-        .sum(dim=1)
-        .cpu()
-        .numpy()
-    )
+    VM_scaling = mean_L1_error(VM_FEA, 0 * VM_FEA).cpu().squeeze()
 
-    print(diff.shape)
-    print(errs[0].shape)
+    VM_errs = [
+        100
+        * mean_L1_error(VMStress(model.constlaw(C_field, eps)), VM_FEA).cpu().squeeze()
+        / VM_scaling
+        for eps in strain_trace
+    ]
+
+    print(VM_scaling, VM_errs[0].shape)
+
+    print("L1 Strain errors is", strain_errs)
+    print("VM stress errors is", VM_errs)
+    # sum difference along each component
+    diff = strain_trace[:-1] - strain_trace[-1]
+    # diff = torch.diff(strain_trace, dim=0) ** 2
+    # take average L2 norm
+    diff = (diff**2).sum(2).sqrt().mean((-3, -2, -1))
+
+    print(diff.shape, diff)
+    print(strain_errs[0].shape)
 
     print("plotting")
-    fig, ax = plt.subplots(2, 1)
-    ax[0].plot(np.arange(N_MAX), errs)
-    ax[0].set_title("StrainError")
-    ax[1].semilogy(np.arange(1, N_MAX), diff)
-    ax[1].set_title("Update")
+    fig, ax = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
+    ax[0].plot(np.arange(N_MAX), strain_errs)
+    ax[0].set_title("Percent Strain Error")
+    # ax[0].set_yticks([1, 10, 20, 50],)
+    # ax[0].get_yaxis().get_major_formatter().labelOnlyBase = False
+
+    ax[1].plot(np.arange(N_MAX), VM_errs)
+    ax[1].set_title("Percent VM Stress Error")
+    # ax[1].set_yticks([1, 10, 20, 50],)
+    # ax[1].get_yaxis().get_major_formatter().labelOnlyBase = False
+
+    ax[2].semilogy(np.arange(N_MAX - 1), diff)
+    ax[2].set_title("DEQ Residual")
+    ax[2].set_xlabel("Iteration")
+    ax[2].xaxis.set_major_locator(tck.MultipleLocator())
     plt.tight_layout()
 
     plt.savefig("conv_trace.png", dpi=300)
@@ -779,16 +803,16 @@ def test_deq_convergence():
 # test_FFT_iters_2phase()
 
 
-# test_FFT_iters_crystal()
-test_deq_convergence()
 test_euler_pred()
-test_constlaw()
-test_stiff_ref()
-test_mandel()
-test_rotat()
-test_mat_vec_op()
+test_deq_convergence()
+# test_FFT_iters_crystal()
+# prof_C_op()
+# test_constlaw()
+# test_stiff_ref()
+# test_mandel()
+# test_rotat()
+# test_mat_vec_op()
 
 
 # test_euler_ang()
-# prof_C_op()
 # test_fft_deriv()

@@ -1,17 +1,3 @@
 {
-    "_description": "Base FNO solver settings",
-    "fno_args": {
-        "modes": [
-            16,
-            16
-        ],
-        "activ_type": "gelu",
-        "init_weight_scale": 1,
-        "normalize": true,
-        "use_weight_norm": false,
-        "resid_conn": true,
-        "projection_channels": 128,
-        "use_MLP": true,
-        "latent_channels": 24
-    }
+    "_description": "Base FNO solver"
 }

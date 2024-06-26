@@ -3,7 +3,7 @@
     "use_deq": true,
     "use_micro": false,
     "use_strain": true,
-    "use_bc_strain": false,
+    "use_bc_strain": true,
     "use_stress": true,
     "use_stress_polarization": true,
     "use_energy": true,
@@ -11,15 +11,11 @@
     "enforce_mean": true,
     "add_bcs_to_iter": true,
     "scale_output": true,
-    "use_skip_update": false,
-    "lr_max": 5e-4,
-    "num_epochs": 50,
-    "num_pretrain_epochs": 0,
     "deq_args": {
         "f_solver": "anderson",
         "b_solver": "anderson",
-        "f_max_iter": 12,
-        "b_max_iter": 12,
+        "f_max_iter": 8,
+        "b_max_iter": 8,
         "f_tol": 1e-4,
         "b_tol": 1e-5,
         "use_ift": true
@@ -29,14 +25,16 @@
             16,
             16
         ],
-        "activ_type": "relu",
-        "init_weight_scale": 2,
+        "activ_type": "gelu",
+        "init_weight_scale": 0.01,
         "normalize": true,
         "use_weight_norm": true,
         "resid_conn": true,
-        "projection_channels": 128,
-        "use_MLP": false,
         "latent_channels": 24,
-        "normalize_inputs": true
-    }
+        "normalize_inputs": true,
+        "projection_channels": 128,
+        "use_mlp_lifting": true,
+        "init_type": "normal"
+    },
+    "lr_max": 1e-3
 }

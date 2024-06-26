@@ -3,7 +3,7 @@
     "use_deq": false,
     "use_micro": true,
     "use_strain": false,
-    "use_bc_strain": false,
+    "use_bc_strain": true,
     "use_stress": false,
     "use_stress_polarization": false,
     "use_energy": false,
@@ -11,22 +11,21 @@
     "enforce_mean": true,
     "scale_output": true,
     "add_bcs_to_iter": true,
-    "lr_max": 5e-4,
-    "num_epochs": 50,
-    "num_pretrain_epochs": 0,
     "fno_args": {
         "modes": [
             16,
             16
         ],
-        "activ_type": "relu",
-        "init_weight_scale": 2,
+        "activ_type": "gelu",
+        "init_weight_scale": 0.01,
         "normalize": true,
         "use_weight_norm": true,
         "resid_conn": true,
-        "projection_channels": 128,
-        "use_MLP": false,
         "latent_channels": 24,
-        "normalize_inputs": true
-    }
+        "normalize_inputs": true,
+        "projection_channels": 128,
+        "use_mlp_lifting": true,
+        "init_type": "normal"
+    },
+    "lr_max": 1e-3
 }

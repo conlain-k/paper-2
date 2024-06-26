@@ -1,0 +1,4 @@
+{
+    "_description": "Feed-forward FNO solver using stiffness coeffs",
+    "_parent": "configs/fno_FF.json"
+}

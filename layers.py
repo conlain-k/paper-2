@@ -330,7 +330,7 @@ class ProjectionBlock(torch.nn.Module):
         hidden_channels=None,
         activ_type="gelu",
         use_weight_norm=False,
-        final_bias=False,
+        final_bias=True,
         normalize=False,
     ):
         super().__init__()
@@ -355,9 +355,10 @@ class ProjectionBlock(torch.nn.Module):
 
     def forward(self, x):
 
-        x = self.proj_1(x)
-        x = self.activ_1(x)
+        # first layer
+        x = self.activ_1(self.proj_1(x))
 
+        # second layer no activ
         x = self.proj_2(x)
 
         return x
