@@ -16,6 +16,8 @@ cd $SLURM_SUBMIT_DIR
 
 echo $SLURM_JOB_ID
 
+conda activate ml
+
 pwd
 
 # Add any cli overrides

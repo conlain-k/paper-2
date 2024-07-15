@@ -1,0 +1,17 @@
+name: ml
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - pytorch
+  - pytorch-cuda
+  - torchvision
+  - matplotlib
+  - h5py
+  - ca-certificates
+  - certifi
+  - openssl
+  - einops
+  - wandb
+  - python
+  - torchaudio

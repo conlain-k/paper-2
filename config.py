@@ -8,13 +8,13 @@ DELIM = "-" * 40
 # coefficients for balancing loss functions
 lam_strain = 1
 lam_stress = 1
-lam_energy = 1
+lam_energy = 0
 
-lam_sum = lam_strain + lam_stress + lam_energy
+# lam_sum = lam_strain + lam_stress + lam_energy
 
-lam_strain = lam_strain / lam_sum
-lam_stress = lam_stress / lam_sum
-lam_energy = lam_energy / lam_sum
+# lam_strain = lam_strain / lam_sum
+# lam_stress = lam_stress / lam_sum
+# lam_energy = lam_energy / lam_sum
 
 # residual error is usually small anyways, and we want our DEQ gradients to be accurate
 lam_resid = 1
@@ -37,20 +37,22 @@ class Config:
     use_stress: bool = False
     use_stress_polarization: bool = False
     use_energy: bool = False
-    use_FFT_resid: bool = False
 
     num_epochs: int = 200
     lr_max: float = 1e-3
 
     loader_args: dict = field(
         default_factory=lambda: {
-            DataMode.TRAIN: {"batch_size": 16, "shuffle": True, "num_workers": 1},
+            DataMode.TRAIN: {"batch_size": 8, "shuffle": True, "num_workers": 1},
             DataMode.VALID: {"batch_size": 256, "shuffle": False, "num_workers": 1},
             DataMode.TEST: {"batch_size": 256, "shuffle": False, "num_workers": 1},
         }
     )
 
-    device: str = "cpu"
+    # whether to override lambdas and balance loss terms manually
+    balance_losses: bool = False
+
+    # device: str = "cpu"
     return_deq_trace: bool = False
 
     # Should we use a fixed maximum # iters, or randomize over training
@@ -81,10 +83,15 @@ class Config:
 
     use_deq: bool = True
     return_resid: bool = True
-    add_Green_iter: bool = True
+    # add encoding of FFT update into normal iteration
+    add_fft_encoding: bool = False
+    # do one FFT step first
+    use_fft_pre_iter: bool = False
+    # do one step FFT after (can be combined with above)
+    use_fft_post_iter: bool = False
 
     # domain length in one direction
-    num_voxels: int = 31
+    num_voxels: int = None
 
     H1_deriv_scaling: float = 0.1
 
@@ -119,78 +126,14 @@ class Config:
 
         return savestr
 
-
-@dataclass
-class LossSet:
-    # holds a set of losses for a given epoch
-    config: Config
-    # total_loss : float = 0
-    strain_loss: float = 0
-    stress_loss: float = 0
-    energy_loss: float = 0
-    resid_loss: float = 0
-
-    def __add__(self, other):
-        # total_loss = self.total_loss + other.total_loss
-        strain_loss = self.strain_loss + other.strain_loss
-        stress_loss = self.stress_loss + other.stress_loss
-        energy_loss = self.energy_loss + other.energy_loss
-        resid_loss = self.resid_loss + other.resid_loss
-
-        return LossSet(
-            self.config,
-            strain_loss,
-            stress_loss,
-            energy_loss,
-            resid_loss,
+    def using_thermo_features(self):
+        # check if we are using any thermodynamic encodings
+        return (
+            self.use_strain
+            or self.use_stress
+            or self.use_stress_polarization
+            or self.use_energy
+            or self.add_fft_encoding
+            or self.use_fft_pre_iter
+            or self.use_fft_post_iter
         )
-
-    def __truediv__(self, x):
-        strain_loss = self.strain_loss / x
-        stress_loss = self.stress_loss / x
-        energy_loss = self.energy_loss / x
-        resid_loss = self.resid_loss / x
-
-        return LossSet(
-            self.config,
-            strain_loss,
-            stress_loss,
-            energy_loss,
-            resid_loss,
-        )
-
-    def compute_total(self):
-        # compute "total" loss metric as weighted average
-        loss = torch.Tensor().to(self.strain_loss.device)
-        if lam_strain > 0:
-            loss = loss + lam_strain * self.strain_loss
-        if lam_stress > 0:
-            loss = loss + lam_stress * self.stress_loss
-        if lam_energy > 0:
-            loss = loss + lam_energy * self.energy_loss
-        if self.config.use_deq:
-            loss = loss + lam_resid * self.resid_loss
-
-        return loss
-
-    def detach(self):
-        return LossSet(
-            self.config,
-            self.strain_loss.detach(),
-            self.stress_loss.detach(),
-            self.energy_loss.detach(),
-            self.resid_loss.detach(),
-        )
-
-    def to_dict(self):
-        # get all losses as dictionary
-
-        return {
-            "strain_loss": self.strain_loss,
-            "stress_loss": self.stress_loss,
-            "energy_loss": self.energy_loss,
-            "resid_loss": self.resid_loss,
-        }
-
-    def __repr__(self):
-        return f"strain loss is {self.strain_loss:.5}, stress loss is {self.stress_loss:.5}, energy loss is {self.energy_loss:.5}, resid loss is {self.resid_loss:.5}"

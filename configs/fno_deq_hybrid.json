@@ -1,5 +1,8 @@
 {
     "_description": "DEQ FNO solver",
     "_parent": "configs/fno_deq.json",
-    "add_Green_iter": true
+    "add_fft_encoding": true,
+    "use_fft_post_iter": false,
+    "use_fft_pre_iter": false,
+    "use_strain": true
 }

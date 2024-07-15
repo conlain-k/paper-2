@@ -51,8 +51,6 @@ class LocalizerBase(torch.nn.Module):
         # other thermo features
         if self.config.use_energy:
             channels += 1
-        if self.config.use_FFT_resid:
-            channels += 6
 
         return channels
 
@@ -78,8 +76,6 @@ class LocalizerBase(torch.nn.Module):
         # other thermo features
         if self.config.use_energy:
             channels += 1
-        if self.config.use_FFT_resid:
-            channels += 6
 
         return channels
 
@@ -88,7 +84,12 @@ class LocalizerBase(torch.nn.Module):
         self.constlaw = StrainToStress_2phase(E_vals, nu_vals)
         self.eps_bar = torch.as_tensor(eps_bar)
 
-        if self.config.use_deq:
+        if (
+            self.config.use_deq
+            or self.config.use_fft_pre_iter
+            or self.config.use_fft_post_iter
+            or self.config.add_fft_encoding
+        ):
             self.greens_op = GreensOp(self.constlaw, self.config.num_voxels)
 
         # take frob norm of a given quantity
@@ -132,10 +133,7 @@ class LocalizerBase(torch.nn.Module):
             feat.append(m)
 
         if self.config.use_C_flat:
-            if C_field is None:
-                C_field = (
-                    self.constlaw.compute_C_field(m) / self.constlaw.stiffness_scaling
-                )
+            C_field = self.lazy_m_to_C(C_field, m)
 
             # append all phases for convenience
             feat.append(flatten_stiffness(C_field))
@@ -147,7 +145,40 @@ class LocalizerBase(torch.nn.Module):
 
         return feat
 
-    def compute_init_scaled_strain(self, micro, init_guess):
+    def encode_micro_strain(self, m, C_field, strain):
+        # build non-thermodynamic features first
+        feat = self.build_nonthermo_features(m, C_field)
+
+        # do we use current strain as feature?
+        if self.config.use_strain:
+            feat.append(strain)
+
+        if self.config.use_stress or self.config.use_energy:
+            C_field = self.lazy_m_to_C(m, C_field)
+            # precompute stress for convenience
+            stress = self.constlaw(C_field, strain)
+
+        # build up features
+        if self.config.use_stress:
+            feat.append(stress)
+
+        if self.config.use_energy:
+            strain_energy = compute_strain_energy(strain, stress)
+            feat.append(strain_energy)
+
+        if self.config.use_stress_polarization:
+            C_field = self.lazy_m_to_C(m, C_field)
+            stress_polar = self.constlaw.stress_pol(strain, C_field, scaled=True)
+            # negate stress polarization to get positive-ish values
+            feat.append(stress_polar)
+
+        # collect features into a vector
+        nn_features = torch.concatenate(feat, dim=1)
+
+        # now return dense feat vec
+        return nn_features
+
+    def compute_init_scaled_strain(self, micro, init_guess=None):
         # get initial strain field (scaled appropriately)
         if init_guess is not None:
             return init_guess
@@ -163,6 +194,14 @@ class LocalizerBase(torch.nn.Module):
 
         return init_strain
 
+    def lazy_m_to_C(self, m, C_tmp=None):
+        # lazily convert micro to C (helper function since we call it a lot)
+        if C_tmp is None:
+            return self.constlaw.compute_C_field(m) / self.constlaw.stiffness_scaling
+        else:
+            # if given a valid stiffness, keep it
+            return C_tmp
+
 
 class Localizer_FeedForward(LocalizerBase):
     # base class for localization models
@@ -176,9 +215,16 @@ class Localizer_FeedForward(LocalizerBase):
 
     def forward(self, m):
         # compute input features (micro, c_flat, bcs, etc.)
-        x = torch.concatenate(self.build_nonthermo_features(m), dim=1)
+        # x = torch.concatenate(self.build_nonthermo_features(m), dim=1)
 
-        # print(x.detach().cpu().mean(dim=(-3, -2, -1, 0)), x.std(dim=(-3, -2, -1, 0)))
+        init_strain = self.compute_init_scaled_strain(m)
+        C_field = None
+        # if we're doing a single FFT step + FNO correction, build up features now
+        if self.config.use_fft_pre_iter:
+            C_field = self.lazy_m_to_C(m, C_field)
+            init_strain = self.greens_op.forward(init_strain, C_field)
+
+        x = self.encode_micro_strain(m, C_field, init_strain)
 
         # apply NN to encoded input
         x = self.net(x)
@@ -204,7 +250,7 @@ class Localizer_DEQ(LocalizerBase):
 
         input_channels = self.count_input_channels()
 
-        if config.add_Green_iter:
+        if config.add_fft_encoding:
             # add FFT prediction and features as well
             input_channels *= 2
 
@@ -214,44 +260,22 @@ class Localizer_DEQ(LocalizerBase):
             **config.fno_args,
         )
 
-    def encode_micro_strain(self, m, C_field, strain):
-
-        feat = self.build_nonthermo_features(m, C_field)
-
-        # do we use current strain as feature?
-        if self.config.use_strain:
-            feat.append(strain)
-
-        if self.config.use_stress or self.config.use_energy:
-            # precompute stress for convenience
-            stress = self.constlaw(C_field, strain)
-
-        # build up features
-        if self.config.use_stress:
-            feat.append(stress)
-
-        if self.config.use_energy:
-            strain_energy = compute_strain_energy(strain, stress)
-            feat.append(strain_energy)
-
-        if self.config.use_stress_polarization:
-            stress_polar = self.constlaw.stress_pol(strain, C_field, scaled=True)
-            # negate stress polarization to get positive-ish values
-            feat.append(stress_polar)
-
-        # collect features into a vector
-        nn_features = torch.concatenate(feat, dim=1)
-
-        # now return dense feat vec
-        return nn_features
-
     def single_iter_simple(self, strain_k, C_field, m):
         """
         Given a stiffness tensor C corresponding to micro m, update the current strain field using the neural net
         """
+
+        # do green's iteration, then use that as input to network
+        if self.config.use_fft_pre_iter:
+            # overwrite current iterate with FFT update
+            strain_k = self.greens_op.forward(strain_k, C_field)
+
         z_k = self.encode_micro_strain(m, C_field, strain_k)
 
-        if self.config.add_Green_iter:
+        # add information from green's op
+        if self.config.add_fft_encoding:
+            # don't do both at once
+            assert not self.config.use_fft_pre_iter
             # get moulinec-suquet update
             # NOTE: block gradients flowing through this step (e.g. don't differentiate through MS step)
             # hopefully this stabilizes training
@@ -266,17 +290,22 @@ class Localizer_DEQ(LocalizerBase):
 
         strain_kp = self.filter_result(strain_kp)
 
+        # do green's iteration on output of network
+        if self.config.use_fft_post_iter:
+            # overwrite current iterate with FFT update
+            strain_kp = self.greens_op.forward(strain_kp, C_field)
+
         assert not torch.isnan(strain_kp).any()
 
         return strain_kp
 
     def _compute_trajectory(self, m, num_iters=32):
         """hook into deq implementation to return full solver trajectory"""
-        C_field = self.constlaw.compute_C_field(m) / self.constlaw.stiffness_scaling
+        C_field = self.lazy_m_to_C(m)
 
         # just iterate over strain dim directly
         F = lambda h: self.single_iter_simple(h, C_field, m)
-        h0 = self.compute_init_scaled_strain(m, None)
+        h0 = self.compute_init_scaled_strain(m)
 
         # indexing starts at 3 in torchdeq (1-based, plus ignores first two iterates)
         indexing = torch.arange(3, num_iters + 3).tolist()
@@ -299,11 +328,11 @@ class Localizer_DEQ(LocalizerBase):
 
     def forward(self, m):
 
-        C_field = self.constlaw.compute_C_field(m) / self.constlaw.stiffness_scaling
+        C_field = self.lazy_m_to_C(m)
 
         # just iterate over strain dim directly
         F = lambda h: self.single_iter_simple(h, C_field, m)
-        h0 = self.compute_init_scaled_strain(m, None)
+        h0 = self.compute_init_scaled_strain(m)
 
         # randomize # iters during train time
         if self.config.deq_randomize_max and self.training:

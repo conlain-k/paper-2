@@ -7,7 +7,7 @@
     "use_stress": false,
     "use_stress_polarization": false,
     "use_energy": false,
-    "add_Green_iter": false,
+    "add_fft_encoding": false,
     "enforce_mean": true,
     "scale_output": true,
     "add_bcs_to_iter": true,
@@ -27,5 +27,5 @@
         "use_mlp_lifting": true,
         "init_type": "uniform"
     },
-    "lr_max": 5e-3
+    "lr_max": 1e-4
 }

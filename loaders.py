@@ -7,12 +7,14 @@ import h5py
 import math
 
 from tensor_ops import *
+from helpers import upsample_field
 
 # increase cache to 1GB
 H5_CACHE_SIZE = 4 * 1024 * 1024 * 1024
 
+
 FAC_STRESS = math.sqrt(2.0)
-FAC_STRAIN = math.sqrt(2.0) / 2.0
+FAC_STRAIN = math.sqrt(2.0)
 
 E_BAR_DEFAULT = torch.as_tensor([0.001, 0, 0, 0, 0, 0])
 
@@ -20,7 +22,7 @@ E_VALS_DEFAULT = [120.0, 100 * 120.0]
 NU_VALS_DEFAULT = [0.3, 0.3]
 
 
-def abaqus_to_mandel(vec_ab, fac=1.0):
+def to_mandel(vec_ab, fac=1.0, swap_abaqus=False):
     # return vec_ab
     # print(vec_ab.shape, vec_ab[:, 0].shape)
     vec_mand = vec_ab.new_zeros(vec_ab.shape)
@@ -33,16 +35,22 @@ def abaqus_to_mandel(vec_ab, fac=1.0):
     vec_mand[..., 4, :, :, :] = fac * vec_ab[..., 4, :, :, :]  # 31
     vec_mand[..., 5, :, :, :] = fac * vec_ab[..., 3, :, :, :]  # 12
 
+    # swap 3rd and 5th entries since abaqus is weird
+    if swap_abaqus:
+        vec_mand[..., [3, 5]] = vec_mand[..., [5, 3]]
+
     return vec_mand
 
 
 class LocalizationDataset(Dataset):
     """Load set of microstructure and strain responses from files"""
 
-    def __init__(self, micro_file, resp_file):
+    def __init__(self, micro_file, resp_file, upsamp_micro_fac=None, swap_abaqus=False):
         # store files
         self.mf = micro_file
         self.rf = resp_file
+
+        self.upsamp_micro_fac = upsamp_micro_fac
 
         # handles to datasets directly
         self.micro = None
@@ -54,6 +62,16 @@ class LocalizationDataset(Dataset):
         self.length = self.getdata(self.mf, dataset_name="micros").shape[0]
 
         self.constlaw = None
+
+        self.swap_abaqus = swap_abaqus
+
+        # conversion factors for loading into mandel form
+        self.fac_strain = FAC_STRAIN
+        self.fac_stress = FAC_STRESS
+
+        if swap_abaqus:
+            # abaqus uses engineering shear strain, moose does not
+            self.fac_strain /= 2
 
     def attach_constlaw(self, constlaw):
         # allows preprocessing using constlaw to convert micro -> stiffness
@@ -151,10 +169,20 @@ class LocalizationDataset(Dataset):
                 # first construct (retrieve?) phase-wise stiffness, then broadcast
 
         strain = torch.from_numpy(self.strain[index]).float()
-        strain = abaqus_to_mandel(strain, fac=FAC_STRAIN)
+        strain = to_mandel(strain, fac=self.fac_strain, swap_abaqus=self.swap_abaqus)
 
         stress = torch.from_numpy(self.stress[index]).float()
-        stress = abaqus_to_mandel(stress, fac=FAC_STRESS)
+        stress = to_mandel(stress, fac=self.fac_stress, swap_abaqus=self.swap_abaqus)
+
+        # print(micro.shape, strain.shape)
+        # upsample microstructures to match strain shapes
+        if self.upsamp_micro_fac is not None:
+            micro = upsample_field(micro, self.upsamp_micro_fac)
+
+        # print(micro.shape, strain.shape)
+        # make sure spatial dims match
+        # print(micro.shape, strain.shape)
+        # assert micro.shape[-3:] == strain.shape[-3:]
 
         return micro, strain, stress
 

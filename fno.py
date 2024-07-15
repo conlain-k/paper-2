@@ -44,7 +44,7 @@ class FNO(torch.nn.Module):
             hidden_channels=final_projection_channels,
             activ_type=activ_type,
             use_weight_norm=False,
-            final_bias=False,
+            # final_bias=False,
         )
 
         blocks = []

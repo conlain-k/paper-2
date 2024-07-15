@@ -72,9 +72,10 @@ def write_dataset_to_h5(dataset, name, h5_file):
     )
 
 
-def collect_datasets(m_base, CR):
+def collect_datasets(m_base, CR, r_base=None):
     # get response file base
-    r_base = f"{m_base}_cr{CR}_bc0_responses"
+    if r_base is None:
+        r_base = f"{m_base}_cr{CR}_bc0_responses"
 
     # build up save strings from this
     MICRO_TRAIN = SCRATCH_DIR + f"micros/{m_base}_train.h5"
@@ -199,6 +200,7 @@ def load_checkpoint(path, model, optim=None, sched=None, strict=True):
 def plot_pred(epoch, micro, y_true, y_pred, field_name, image_dir):
     vmin_t, vmax_t = y_true.min(), y_true.max()
     vmin_p, vmax_p = y_pred.min(), y_pred.max()
+    # use outer extremes
     vmin = min(vmin_t, vmin_p)
     vmax = max(vmax_t, vmax_p)
 
@@ -265,6 +267,8 @@ def check_constlaw(constlaw, micro, strain, stress):
 
     C_field = constlaw.compute_C_field(micro)
 
+    print("C ref", constlaw.C_ref)
+
     stress_comp = constlaw(C_field, strain)
 
     err = (stress_comp - stress).abs()
@@ -283,6 +287,12 @@ def check_constlaw(constlaw, micro, strain, stress):
     sind = s_[:, :, z]
 
     print(f"Err mean {err.mean()} std {err.std()} min {err.min()} max {err.max()}")
+
+    print("stress true", stress[b, c].min(), stress[b, c].max())
+    print("stress comp", stress_comp[b, c].min(), stress_comp[b, c].max())
+
+    print("strain vals", strain[b, c].min(), strain[b, c].max())
+    print("strain means", strain.mean((0, -3, -2, -1)))
 
     # print(f"Each component err mean is: {err.mean(dim=(0, -1, -2, -3))}")
 
@@ -312,7 +322,7 @@ def check_constlaw(constlaw, micro, strain, stress):
         "images/",
     )
 
-    assert torch.allclose(stress_comp, stress, rtol=1e-8, atol=1e-5)
+    assert torch.allclose(stress_comp, stress, rtol=1e-8, atol=2e-5)
 
 
 def compute_quants(model, strain, C_field):

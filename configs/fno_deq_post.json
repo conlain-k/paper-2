@@ -1,0 +1,6 @@
+{
+    "_description": "DEQ FNO solver, alternating between FFT and NN steps",
+    "_parent": "configs/fno_deq.json",
+    "use_fft_post_iter": true,
+    "use_fft_pre_iter": false
+}

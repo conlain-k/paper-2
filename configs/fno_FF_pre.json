@@ -1,0 +1,7 @@
+{
+    "_description": "Feed-forward FNO solver using stiffness coeffs",
+    "_parent": "configs/fno_FF.json",
+    "use_micro": false,
+    "use_C_flat": false,
+    "use_fft_pre_iter": true
+}

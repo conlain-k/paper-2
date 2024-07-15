@@ -9,6 +9,8 @@ from train import train_model
 from loaders import LocalizationDataset
 from solvers import make_localizer
 
+from math import ceil
+
 import pprint
 
 import wandb, os
@@ -39,11 +41,28 @@ import logging
 logger = logging.getLogger("wandb")
 logger.setLevel(logging.ERROR)
 
+
 # this also defines the dataset we are loading
 CR_str = "100.0"
 m_base = "paper2_smooth"
+r_base = None
+USING_ABAQUS_DATASET = True
+USING_ABAQUS_DATASET = True
+UPSAMP_MICRO_FAC = None
 
-datasets, CR = collect_datasets(m_base, CR_str)
+m_base = "paper2_16"
+r_base = "paper2_16_u2_responses"
+USING_ABAQUS_DATASET = False
+
+UPSAMP_MICRO_FAC = 2
+
+m_base = "paper2_16"
+r_base = "paper2_16_u1_responses"
+UPSAMP_MICRO_FAC = 1
+
+
+datasets, CR = collect_datasets(m_base, CR_str, r_base=r_base)
+
 
 E_VALS = [120.0, CR * 120.0]
 NU_VALS = [0.3, 0.3]
@@ -58,7 +77,11 @@ def load_data(config, mode):
     print("Loading {mode} data! This may take a bit ...")
     print(f"Currently loading files {datasets[mode]} for mode {mode}")
 
-    dataset_train = LocalizationDataset(**datasets[mode])
+    dataset_train = LocalizationDataset(
+        **datasets[mode],
+        upsamp_micro_fac=UPSAMP_MICRO_FAC,
+        swap_abaqus=USING_ABAQUS_DATASET,
+    )
 
     # dump into dataloader
     loader_train = DataLoader(
@@ -122,21 +145,38 @@ if __name__ == "__main__":
     if args.init_weight_scale:
         config.fno_args["init_weight_scale"] = args.init_weight_scale
 
+    # profile_forward(model)
+
+    train_loader = load_data(config, DataMode.TRAIN)
+    valid_loader = load_data(config, DataMode.VALID)
+
+    # NOTE assumes that second-to-last strain dimension is a spatial one
+    num_voxels = train_loader.dataset[0][1].shape[-2]
+    config.num_voxels = num_voxels
+
+    modes = config.fno_args["modes"]
+
+    # if # modes is negative or too big for given data, only keep amount that data can provide
+    full_num_modes = ceil(num_voxels / 2)
+
+    modes_new = [
+        full_num_modes if (m == -1 or m > full_num_modes) else m for m in modes
+    ]
+
+    config.fno_args["modes"] = modes_new
+
     model = make_localizer(config)
+
+    # now we can set constitutive parameters
     model.setConstParams(E_VALS, NU_VALS, E_BAR)
 
     model = model.to(DEVICE)
     model.inf_device = DEVICE
-    # profile_forward(model)
 
     print(DELIM)
     print(model)
     print(count_parameters(model))
     print(DELIM)
-
-    train_loader = load_data(config, DataMode.TRAIN)
-
-    valid_loader = load_data(config, DataMode.VALID)
 
     print(f"\nConfig is:\n{pprint.pformat(asdict(config))}\n")
 
