@@ -1,0 +1,12 @@
+{
+    "_description": "Implicit FNO solver",
+    "model_type": "IFNOLocalizer",
+    "_parent": "configs/fno_base.json",
+    "use_micro": false,
+    "use_C_flat": true,
+    "thermo_feat_args": {},
+    "enforce_mean": true,
+    "scale_output": true,
+    "add_bcs_to_iter": true,
+    "num_ifno_iters": 8
+}

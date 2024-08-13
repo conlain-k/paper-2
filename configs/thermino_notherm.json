@@ -1,0 +1,9 @@
+{
+    "_description": "Ablation version of thermino without therm encodings",
+    "model_type": "ThermINOLocalizer",
+    "_parent": "configs/thermino.json",
+    "use_C_flat": true,
+    "thermo_feat_args": {
+        "use_strain": true
+    }
+}

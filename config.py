@@ -8,7 +8,7 @@ DELIM = "-" * 40
 # coefficients for balancing loss functions
 lam_strain = 1
 lam_stress = 1
-lam_energy = 0
+lam_energy = 1
 
 # lam_sum = lam_strain + lam_stress + lam_energy
 
@@ -28,39 +28,63 @@ class Config:
     _conf_file: str = None
     image_dir: str = "images/default/"
     arch_str: str = ""
-
-    # input features (at least one of these must be set to true!)
-    use_micro: bool = False
-    use_C_flat: bool = False
-    use_strain: bool = False
-    use_bc_strain: bool = False
-    use_stress: bool = False
-    use_stress_polarization: bool = False
-    use_energy: bool = False
+    model_type: str = None
 
     num_epochs: int = 200
     lr_max: float = 1e-3
 
+    # whether to override lambdas and balance loss terms manually
+    balance_losses: bool = False
+    grad_clip_mag: float = 10
+    use_EMA: bool = False
+
+    # input features (at least one of these must be set to true!)
+    use_micro: bool = False
+    use_C_flat: bool = False
+    use_bc_strain: bool = False
+
+    # default to global values, but allow overwrite
+    lam_strain: float = lam_strain
+    lam_stress: float = lam_stress
+    lam_energy: float = lam_energy
+    lam_resid: float = lam_resid
+
+    # use regular L2 norm (rather than squared)
+    # adds cost / complexity, but makes balancing terms easier
+    use_sqrt_loss: bool = False
+
+    # args when thermo features are used
+    # "use_strain": None
+    # "use_stress": None
+    # "use_stress_polarization": None
+    # "use_energy": None
+    thermo_feat_args: dict = field(default_factory=lambda: {})
+
+    # args for dataloader
     loader_args: dict = field(
         default_factory=lambda: {
-            DataMode.TRAIN: {"batch_size": 8, "shuffle": True, "num_workers": 1},
+            DataMode.TRAIN: {"batch_size": 16, "shuffle": True, "num_workers": 1},
             DataMode.VALID: {"batch_size": 256, "shuffle": False, "num_workers": 1},
             DataMode.TEST: {"batch_size": 256, "shuffle": False, "num_workers": 1},
         }
     )
 
-    # whether to override lambdas and balance loss terms manually
-    balance_losses: bool = False
+    scale_output: bool = True
+    enforce_mean: bool = True
+    add_bcs_to_iter: bool = True
 
-    # device: str = "cpu"
-    return_deq_trace: bool = False
+    return_resid: bool = False
 
     # Should we use a fixed maximum # iters, or randomize over training
+    # only used for DEQ-type models
     deq_randomize_max: bool = True
     deq_min_iter: int = 4
+    # number of IFNO iterations (only used for IFNO)
+    num_ifno_iters: int = None
 
     # passthrough args to DEQ
     deq_args: dict = field(default_factory=lambda: {})
+    # args for fno pieces
     fno_args: dict = field(
         default_factory=lambda: {
             "modes": None,
@@ -73,37 +97,24 @@ class Config:
         }
     )
 
-    grad_clip_mag: float = 1
-    use_skip_update: bool = False
-    scale_output: bool = True
-    enforce_mean: bool = True
-    add_bcs_to_iter: bool = True
+    latent_channels: int = None
 
-    use_EMA: bool = False
-
-    use_deq: bool = True
-    return_resid: bool = True
-    # add encoding of FFT update into normal iteration
-    add_fft_encoding: bool = False
-    # do one FFT step first
-    use_fft_pre_iter: bool = False
-    # do one step FFT after (can be combined with above)
-    use_fft_post_iter: bool = False
+    # args for hybrid mode only
+    hybrid_args: dict = field(
+        default_factory=lambda: {
+            # add encoding of FFT update into normal iteration
+            "add_fft_encoding": None,
+            # do one FFT step first
+            "use_fft_pre_iter": None,
+            # do one step FFT after (can be combined with above)
+            "use_fft_post_iter": None,
+        }
+    )
 
     # domain length in one direction
     num_voxels: int = None
 
-    H1_deriv_scaling: float = 0.1
-
-    # default to global values, but allow overwrite
-    lam_strain: float = lam_strain
-    lam_stress: float = lam_stress
-    lam_energy: float = lam_energy
-    lam_resid: float = lam_resid
-
-    # use regular L2 norm (rather than squared)
-    # adds cost / complexity, but makes balancing terms easier
-    use_sqrt_loss: bool = False
+    # H1_deriv_scaling: float = 0.1
 
     def __post_init__(self):
         conf_base = os.path.basename(self._conf_file)
@@ -128,12 +139,4 @@ class Config:
 
     def using_thermo_features(self):
         # check if we are using any thermodynamic encodings
-        return (
-            self.use_strain
-            or self.use_stress
-            or self.use_stress_polarization
-            or self.use_energy
-            or self.add_fft_encoding
-            or self.use_fft_pre_iter
-            or self.use_fft_post_iter
-        )
+        return bool(self.thermo_feat_args)

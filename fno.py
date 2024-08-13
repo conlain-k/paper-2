@@ -5,11 +5,10 @@ import fourier_conv
 from torch.nn.utils.parametrizations import weight_norm
 
 from layers import ProjectionBlock, get_activ
-from helpers import print_activ_map
 
 
 class FNO(torch.nn.Module):
-    """Fourier Neural Operator for localization"""
+    """Base class for FNO-type models. Could change lift/middle/proj blocks to anything (e.g. DeepONet, etc.)"""
 
     def __init__(
         self,
@@ -25,26 +24,37 @@ class FNO(torch.nn.Module):
         **kwargs,
     ):
         super().__init__()
-        # just use a regular conv for lift
-
+        # build lifting op
         if use_mlp_lifting:
-            self.lift = ProjectionBlock(
+            lift = ProjectionBlock(
                 in_channels,
                 latent_channels,
-                hidden_channels=final_projection_channels,
-                activ_type=activ_type,
-                use_weight_norm=False,
+                final_projection_channels,
+                activ_type,
+                use_weight_norm,
             )
         else:
-            self.lift = torch.nn.Conv3d(in_channels, latent_channels, kernel_size=1)
+            lift = torch.nn.Conv3d(
+                kernel_size=1,
+                in_channels=in_channels,
+                out_channels=latent_channels,
+            )
 
+        if normalize_inputs:
+            input_norm = torch.nn.GroupNorm(num_groups=1, num_channels=in_channels)
+
+            # normalize before lifting
+            self.lift = torch.nn.Sequential(input_norm, lift)
+        else:
+            self.lift = lift
+
+        # build projection op
         self.proj = ProjectionBlock(
             latent_channels,
             out_channels,
             hidden_channels=final_projection_channels,
             activ_type=activ_type,
             use_weight_norm=False,
-            # final_bias=False,
         )
 
         blocks = []
@@ -59,31 +69,77 @@ class FNO(torch.nn.Module):
                 )
             )
 
-        self.blocks = torch.nn.ModuleList(blocks)
-
-        self.normalize_inputs = normalize_inputs
-        if self.normalize_inputs:
-            self.input_norm = torch.nn.GroupNorm(
-                1,
-                in_channels,
-            )
+        self.middle = torch.nn.Sequential(*blocks)
 
     def forward(self, x):
-
-        if self.normalize_inputs:
-            x = self.input_norm(x)
-
+        # a single feedforward
         # lift into latent space
         x = self.lift(x)
 
-        for block in self.blocks:
-            # apply FNO blocks sequentially
-            x = block(x)
+        x = self.middle(x)
 
         # now project onto strain field
         x = self.proj(x)
 
         return x
+
+
+# class FNO_FF(torch.nn.Module):
+#     """Regular Feed-forward Fourier Neural Operator"""
+
+#     def __init__(
+#         self,
+#         in_channels,
+#         out_channels,
+#         latent_channels=24,
+#         final_projection_channels=128,  # defaults to bigger of latent_channels, out_channels
+#         activ_type="gelu",
+#         use_weight_norm=False,
+#         normalize_inputs=False,
+#         use_mlp_lifting=False,
+#         modes=(10, 10),
+#         **kwargs,
+#     ):
+#         super().__init__()
+#         # just use a regular conv for lift
+
+#         self.lift = make_FNO_encoder(
+#             in_channels,
+#             latent_channels,
+#             hidden_channels=final_projection_channels,
+#             activ_type=activ_type,
+#             use_weight_norm=False,
+#             use_mlp_lifting=use_mlp_lifting,
+#             normalize_inputs=normalize_inputs,
+#         )
+
+#         self.proj = ProjectionBlock(
+#             latent_channels,
+#             out_channels,
+#             hidden_channels=final_projection_channels,
+#             activ_type=activ_type,
+#             use_weight_norm=False,
+#         )
+
+#         self.middle = make_FNO_middle(
+#             modes,
+#             activ_type,
+#             use_weight_norm,
+#             latent_channels,
+#             **kwargs,
+#         )
+
+#     def forward(self, x):
+#         # a single feedforward
+#         # lift into latent space
+#         x = self.lift(x)
+
+#         x = self.middle(x)
+
+#         # now project onto strain field
+#         x = self.proj(x)
+
+#         return x
 
 
 class FNO_Block(torch.nn.Module):
@@ -132,9 +188,13 @@ class FNO_Block(torch.nn.Module):
         if self.resid_conn:
             x0 = x
 
+        # normalize inputs for stability
         x = self.norm(x) if self.normalize else x
 
-        x = self.activ(self.conv(x) + self.filt(x))
+        # apply fourier and spatial filters
+        x = self.conv(x) + self.filt(x)
+
+        x = self.activ(x)
 
         if self.resid_conn:
             # residual connection

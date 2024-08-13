@@ -1,0 +1,40 @@
+{
+    "_description": "DEQ FNO solver",
+    "use_deq": true,
+    "use_micro": false,
+    "use_strain": true,
+    "use_bc_strain": true,
+    "use_stress": true,
+    "use_stress_polarization": true,
+    "use_energy": true,
+    "add_fft_encoding": false,
+    "deq_args": {
+        "f_solver": "anderson",
+        "b_solver": "anderson",
+        "f_max_iter": 16,
+        "b_max_iter": 16,
+        "f_tol": 1e-5,
+        "b_tol": 1e-5,
+        "use_ift": true
+    },
+    "enforce_mean": true,
+    "scale_output": true,
+    "add_bcs_to_iter": true,
+    "fno_args": {
+        "modes": [
+            -1,
+            -1
+        ],
+        "activ_type": "gelu",
+        "init_weight_scale": 0.1,
+        "normalize": true,
+        "use_weight_norm": true,
+        "resid_conn": true,
+        "latent_channels": 24,
+        "normalize_inputs": false,
+        "projection_channels": 128,
+        "use_mlp_lifting": false,
+        "init_type": "uniform"
+    },
+    "lr_max": 5e-3
+}

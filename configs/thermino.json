@@ -1,0 +1,26 @@
+{
+    "_description": "Thermino solver",
+    "model_type": "ThermINOLocalizer",
+    "_parent": "configs/fno_base.json",
+    "use_micro": false,
+    "use_C_flat": true,
+    "thermo_feat_args": {
+        "use_strain": true,
+        "use_stress": true,
+        "use_stress_polarization": true,
+        "use_energy": true
+    },
+    "enforce_mean": true,
+    "scale_output": true,
+    "add_bcs_to_iter": true,
+    "deq_args": {
+        "f_solver": "anderson",
+        "b_solver": "anderson",
+        "f_max_iter": 16,
+        "b_max_iter": 16,
+        "f_tol": 1e-5,
+        "b_tol": 1e-5,
+        "use_ift": true
+    },
+    "return_resid": true
+}

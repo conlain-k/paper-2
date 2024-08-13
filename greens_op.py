@@ -17,12 +17,10 @@ class GreensOp(torch.nn.Module):
         self.N = N
 
         # precompute Green's op in freq space
-        self.register_buffer(
-            "G_freq", self._compute_coeffs(self.N, filt=False, willot=True)
-        )
+        self.register_buffer("G_freq", self._compute_coeffs(self.N, willot=True), persistent=False)
 
-        freqs_base = self.get_freqs(N, willot=False)
-        freqs_willot = self.get_freqs(N, willot=True)
+        # freqs_base = self.get_freqs(N, willot=False)
+        # freqs_willot = self.get_freqs(N, willot=True)
 
         # print("freqs_base", freqs_base[0, 1, 0])
         # print("freqs_willot", freqs_willot[0, 1, 0])
@@ -90,7 +88,7 @@ class GreensOp(torch.nn.Module):
     #         i, j, k, h = ind
     #         G[k, h, i, j] = self._G(q, ind)
 
-    def _compute_coeffs(self, N, filt=False, willot=False):
+    def _compute_coeffs(self, N, willot=False):
 
         # two coefficients in Green's op calculation
         coef_1 = 1 / (4 * self.constlaw.mu_0)
@@ -127,12 +125,13 @@ class GreensOp(torch.nn.Module):
             G[k, h, i, j] = coef_1 * term_1 - coef_2 * term_2
             # print(i, j, k, h, G[i, j, k, h].abs().sum())
 
-        if filt:
-            filter = (1 + torch.cos(PI * normq)) / 2
-            G = G * filter.reshape(1, 1, 1, 1, N, N, N)
-
         # Make sure zero-freq terms are actually zero for each component
         G[..., 0, 0, 0] = 0
+        # if even, zero out Nyquist freq as well (following Willot)
+        if N % 2 == 0:
+            N_half = N // 2
+            G[..., N_half, N_half, N_half] = 0
+
         return G
 
     def forward(self, eps_k, C_field, use_polar=True):
@@ -195,7 +194,7 @@ class GreensOp(torch.nn.Module):
         resid_equi = torch.einsum("rc, bcijk -> brijk", self.constlaw.S_ref, stress)
         resid_equi = self.project_D(resid_equi)
 
-        # normali   ze by avg strain (assumes average matches true avg and is nonzero)
+        # normalize by avg strain (assumes average matches true avg and is nonzero)
         mean_strain = strain.mean(dim=(-3, -2, -1), keepdim=True)
         # take L2 norm of mean strain
         mean_strain_scale = (mean_strain**2).sum(dim=1, keepdim=True).sqrt()

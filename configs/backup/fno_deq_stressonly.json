@@ -1,0 +1,7 @@
+{
+    "_description": "DEQ FNO solver",
+    "_parent": "configs/fno_deq.json",
+    "lam_strain": 0,
+    "lam_stress": 1,
+    "lam_energy": 0
+}

@@ -8,5 +8,7 @@
     "use_stress": false,
     "use_stress_polarization": false,
     "use_energy": false,
-    "add_Green_iter": false
+    "add_fft_encoding": false,
+    "use_fft_post_iter": false,
+    "use_fft_pre_iter": false
 }

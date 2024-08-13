@@ -12,9 +12,11 @@ from constlaw import *
 FIELD_IND = 0
 
 # index of worst strain microstructure
-PLOT_IND_WORST_STRAIN = 178
+PLOT_IND_WORST_STRAIN = 1872
 # index of worst stress microstructure
-PLOT_IND_WORST_STRESS = 836
+PLOT_IND_WORST_STRESS = 0
+# generic easy micro
+PLOT_IND_GENERIC = 155
 
 CHECK_CONSTLAW = True
 
@@ -78,23 +80,18 @@ def plot_example(epoch, model, loader, ind, add_str=None):
     micro = micro.to(model.inf_device)
     strain_true = strain_true.to(model.inf_device)
 
-    # evaluate model
-    strain_pred = model(micro)
+    eps_bar = model.eps_bar
 
-    if model.config.return_resid and model.config.use_deq:
+    C_field = model.constlaw.compute_C_field(micro)
+
+    # evaluate model
+    strain_pred = model(C_field, eps_bar)
+
+    if model.config.return_resid:
         # also grab resid if it's an option
         strain_pred, resid = strain_pred
     else:
         resid = 0 * strain_pred
-
-    # get worst L1 error
-    ind_max = (
-        torch.argmax((strain_true - strain_pred)[:, FIELD_IND].abs().max())
-        .detach()
-        .cpu()
-    )
-
-    ind_max = unravel_index(ind_max, strain_true[:, FIELD_IND].detach().cpu().shape)
 
     C_field = model.constlaw.compute_C_field(micro)
 
@@ -105,6 +102,16 @@ def plot_example(epoch, model, loader, ind, add_str=None):
     stress_true, stress_polar_true, energy_true = compute_quants(
         model, strain_true, C_field
     )
+
+    mean_L1_strain_errs = (strain_pred - strain_true).abs().mean(
+        dim=(-3, -2, -1)
+    ) / model.constlaw.strain_scaling
+    mean_L1_stress_errs = (stress_pred - stress_true).abs().mean(
+        dim=(-3, -2, -1)
+    ) / model.constlaw.stress_scaling
+
+    print("Strain MAE: ", mean_L1_strain_errs)
+    print("Stress MAE: ", mean_L1_stress_errs)
 
     # also compute VM stresses at that location
     VM_stress_pred = VMStress(stress_pred)
@@ -125,20 +132,24 @@ def plot_example(epoch, model, loader, ind, add_str=None):
 
     energy_err = energy_err.squeeze()
 
-    print(
-        f"\tStressdiv true mean {stressdiv_true.abs().mean()} std {stressdiv_true.abs().std()}"
-    )
-    print(
-        f"\tStressdiv pred mean {stressdiv_pred.abs().mean()} std {stressdiv_pred.abs().std()}"
-    )
+    # print(
+    #     f"\tStressdiv true mean {stressdiv_true.abs().mean()} std {stressdiv_true.abs().std()}"
+    # )
+    # print(
+    #     f"\tStressdiv pred mean {stressdiv_pred.abs().mean()} std {stressdiv_pred.abs().std()}"
+    # )
 
-    # C11_tr_homog(straue = est_homog(strain_true, stress_true, (0, 0)).squeeze()
-    # C11_pred = estin_pred, stress_pred, (0, 0)).squeeze()
+    # print(
+    #     f"\tStress x-x true mean {stress_true[:, 0].mean()} std {stress_true[:, 0].std()}"
+    # )
+    # print(
+    #     f"\tStress x-x pred mean {stress_pred[:, 0].mean()} std {stress_pred[:, 0].std()}"
+    # )
+
+    # print(f"\tStress slice true mean {stress_true[0, [0,1], 0,0,:]}")
+    # print(f"\tStress slice pred mean {stress_pred[0, [0,1], 0,0,:]}")
 
     energy = compute_strain_energy(strain_true, stress_true).mean()
-    print(
-        f"Saving fig for epoch {epoch}, plotting micro {ind} near {ind_max}, VM L1 err is {VM_L1_err.item():4f}, energy is {energy:4f}"
-    )
 
     # get worst L1 error
     ind_max = (
@@ -148,6 +159,10 @@ def plot_example(epoch, model, loader, ind, add_str=None):
     )
 
     ind_max = unravel_index(ind_max, strain_true[:, FIELD_IND].detach().cpu().shape)
+
+    print(
+        f"Saving fig for epoch {epoch}, plotting micro {ind} near {ind_max}, VM L1 err is {VM_L1_err.item():4f}, energy is {energy:4f}"
+    )
 
     # Plot z=const slice
     sind = s_[:, :, ind_max[-1]]
@@ -178,13 +193,20 @@ def plot_example(epoch, model, loader, ind, add_str=None):
         model.config.image_dir + add_str,
     )
 
-    if model.config.use_deq:
+    if True:
 
         compat_err_true, equib_err_true = model.greens_op.compute_residuals(
             strain_true, stress_true
         )
         compat_err_pred, equib_err_pred = model.greens_op.compute_residuals(
             strain_pred, stress_pred
+        )
+
+        print(
+            f"\tTrue equib {equib_err_true.mean():4f}, {equib_err_true.std():4f}, {equib_err_true.min():4f}, {equib_err_true.max():4f}"
+        )
+        print(
+            f"\tPred equib {equib_err_pred.mean():4f}, {equib_err_pred.std():4f}, {equib_err_pred.min():4f}, {equib_err_pred.max():4f}"
         )
 
         plot_pred(
@@ -248,15 +270,9 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
     stress_pred = model.constlaw(C_field, strain_pred)
     stress_true = model.constlaw(C_field, strain_true)
 
-    # get stiffness scalings (to offset effect of higher-vf micros)
-    # get dimension (assumes square)
-    # how many voxels?
-    S = torch.numel(C_field[0, 0, 0])
-
     def frob_norm_2(field):
         """squared batched frobenius norm (sum over first dimension)"""
         return (field**2).sum(1).mean((-3, -2, -1))
-        # return torch.einsum("b...xyz, b...xyz -> b", field, field) / (S**2)
 
     strain_err = (strain_true - strain_pred) / model.constlaw.strain_scaling
     stress_err = (stress_true - stress_pred) / model.constlaw.stress_scaling
@@ -308,7 +324,7 @@ def compute_losses(model, strain_pred, strain_true, C_field, resid):
     total_loss = (
         lam_strain * strain_loss + lam_stress * stress_loss + lam_energy * energy_loss
     )
-    if model.config.use_deq:
+    if model.config.return_resid:
         total_loss = total_loss + model.config.lam_resid * resid_loss
 
     # return losses.detach(), stress_loss
@@ -333,7 +349,7 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
 
     # plot worst micros in validation set
     plot_example(epoch, model, eval_loader, PLOT_IND_WORST_STRAIN, "/hard/")
-    plot_example(epoch, model, eval_loader, PLOT_IND_WORST_STRESS, "/easy/")
+    plot_example(epoch, model, eval_loader, PLOT_IND_GENERIC, "/easy/")
     running_time_cost = 0
     for batch_ind, (micros, strain_true, stress_true) in enumerate(eval_loader):
 
@@ -349,12 +365,16 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
         strain_true = strain_true.to(model.inf_device)
         stress_true = stress_true.to(model.inf_device)
 
-        if batch_ind == 0 and CHECK_CONSTLAW:
+        # check that constlaw is accurate (helps pick off errors in conversion, etc.)
+        if (batch_ind == 0) and (epoch == 0) and CHECK_CONSTLAW:
             check_constlaw(model.constlaw, micros, strain_true, stress_true)
+
+        C_field = model.constlaw.compute_C_field(micros)
+        eps_bar = model.eps_bar
 
         # now evaluate model
         with torch.inference_mode():
-            output = eval_model(micros)
+            output = eval_model(C_field, eps_bar)
 
         # how long did that pass take?
         sync()
@@ -366,7 +386,7 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
         # build up how long it's taken to run all samples
         running_time_cost += t1 - t0
 
-        if model.config.return_resid and model.config.use_deq:
+        if model.config.return_resid:
             (strain_pred, resid) = output
         else:
             strain_pred = output
@@ -457,7 +477,7 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
         )
 
     # print some metrics on the epoch
-    print(f"Epoch {epoch}, {data_mode} loss: {running_loss}")
+    print(f"Epoch {epoch}, valid loss: {running_loss}")
     print(f"Normalized e_xx absolute error is: {L1_exx_err_mean * 100:.5} %")
     print(f"Normalized VM stress absolute error is: {L1_VM_err_mean * 100:.5} %")
     print(
@@ -497,7 +517,7 @@ def train_model(model, config, train_loader, valid_loader):
     #     config.lr_max,
     #     epochs=config.num_epochs,
     #     steps_per_epoch=1,
-    #     pct_start=0.2,  # first 20% is increase, then anneal
+    #     pct_start=0.1,  # first 10% is increase, then anneal
     # )
 
     print(
@@ -539,7 +559,7 @@ def train_model(model, config, train_loader, valid_loader):
             # only predict first component
             strain_true = strain_true.to(model.inf_device)
 
-            if batch_ind == 0 and CHECK_CONSTLAW:
+            if (batch_ind == 0) and CHECK_CONSTLAW and (e == 0):
                 batch_stress_true = batch_stress_true.to(model.inf_device)
 
                 check_constlaw(model.constlaw, micros, strain_true, batch_stress_true)
@@ -547,11 +567,15 @@ def train_model(model, config, train_loader, valid_loader):
             # zero out gradients
             optimizer.zero_grad()
 
+            eps_bar = model.eps_bar
+
+            C_field = model.constlaw.compute_C_field(micros)
+
             # apply model forward pass
-            output = model(micros)
+            output = model(C_field, eps_bar)
 
             # extract output
-            if config.use_deq and config.return_resid:
+            if config.return_resid:
                 (strain_pred, resid) = output
             else:
                 strain_pred = output
@@ -618,10 +642,6 @@ def train_model(model, config, train_loader, valid_loader):
                 "valid_time_per_micro": valid_time_per_micro,
             }
         )
-
-        # clean out cuda cache
-        # if  model.config.use_deq:
-        #     torch.cuda.empty_cache()
 
         print(f"Training pass took {diff}s")
 

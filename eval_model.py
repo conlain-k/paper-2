@@ -15,7 +15,7 @@ import os
 
 import argparse
 
-from torch.nn.parallel import DistributedDataParallelCPU
+# from torch.nn.parallel import DistributedDataParallelCPU
 
 parser = argparse.ArgumentParser(prog="main.py", description="Train localization NN")
 

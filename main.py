@@ -8,6 +8,7 @@ from helpers import *
 from train import train_model
 from loaders import LocalizationDataset
 from solvers import make_localizer
+import constlaw
 
 from math import ceil
 
@@ -31,7 +32,7 @@ parser.add_argument(
     "--lr_max", help="Initial learning rate to use", default=None, type=float
 )
 
-torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.enabled = True
 
 os.environ["WANDB_SILENT"] = "true"
@@ -40,7 +41,6 @@ import logging
 
 logger = logging.getLogger("wandb")
 logger.setLevel(logging.ERROR)
-
 
 # this also defines the dataset we are loading
 CR_str = "100.0"
@@ -60,6 +60,10 @@ m_base = "paper2_16"
 r_base = "paper2_16_u1_responses"
 UPSAMP_MICRO_FAC = 1
 
+# m_base = "paper2_32"
+# r_base = "paper2_32_u1_responses"
+# UPSAMP_MICRO_FAC = 1
+
 
 datasets, CR = collect_datasets(m_base, CR_str, r_base=r_base)
 
@@ -74,60 +78,20 @@ DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 # load train and validation sets from given file base
 def load_data(config, mode):
     global ref_val
-    print("Loading {mode} data! This may take a bit ...")
     print(f"Currently loading files {datasets[mode]} for mode {mode}")
 
-    dataset_train = LocalizationDataset(
+    dataset = LocalizationDataset(
         **datasets[mode],
         upsamp_micro_fac=UPSAMP_MICRO_FAC,
         swap_abaqus=USING_ABAQUS_DATASET,
     )
 
     # dump into dataloader
-    loader_train = DataLoader(
-        dataset_train, pin_memory=True, **config.loader_args[mode]
-    )
+    loader = DataLoader(dataset, pin_memory=True, **config.loader_args[mode])
 
-    print("Data loaded!")
-    print(f"Training on {len(dataset_train)} instances!")
-    # print(f"Validating on {len(dataset_valid)} instances!")
-    print("Data type is", dataset_train[0][0].dtype)
-    return loader_train  # , loader_valid
-
-
-def tiny_forward(model, micros):
-    for i in range(5):
-        y = model(micros)
-        loss = (y**2).mean()
-        # loss.backward()
-
-
-def profile_forward(model):
-    from torch.profiler import profile, record_function, ProfilerActivity
-
-    model.config.return_resid = False
-
-    # generate random set of microstructures
-    micros = torch.randn(128, 2, 31, 31, 31).cuda()
-    model.eval()
-    model = model.cuda()
-
-    # print(torch.cuda.memory_summary())
-    torch.cuda.synchronize()
-
-    tiny_forward(model, micros)
-
-    with profile(
-        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True
-    ) as prof:
-        with record_function("model_inference"):
-            # with torch.no_grad():
-            tiny_forward(model, micros)
-            # loss.backward()
-
-    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20))
-
-    print(torch.cuda.memory_summary())
+    print(f"Dataset {mode} has {len(dataset)} instances!")
+    print("Data type is", dataset[0][0].dtype)
+    return loader
 
 
 if __name__ == "__main__":
@@ -135,7 +99,6 @@ if __name__ == "__main__":
 
     if args.config_override:
         conf_args = load_conf_override(args.config_override)
-        # print(conf_args)
         config = Config(**conf_args, use_EMA=args.use_ema)
     else:
         config = Config()
@@ -145,8 +108,7 @@ if __name__ == "__main__":
     if args.init_weight_scale:
         config.fno_args["init_weight_scale"] = args.init_weight_scale
 
-    # profile_forward(model)
-
+    # get train and validation datasets
     train_loader = load_data(config, DataMode.TRAIN)
     valid_loader = load_data(config, DataMode.VALID)
 
@@ -154,21 +116,14 @@ if __name__ == "__main__":
     num_voxels = train_loader.dataset[0][1].shape[-2]
     config.num_voxels = num_voxels
 
-    modes = config.fno_args["modes"]
-
-    # if # modes is negative or too big for given data, only keep amount that data can provide
-    full_num_modes = ceil(num_voxels / 2)
-
-    modes_new = [
-        full_num_modes if (m == -1 or m > full_num_modes) else m for m in modes
-    ]
-
-    config.fno_args["modes"] = modes_new
+    # config.fno_args["modes"] = modes_new
+    # cache training data name for future reference
+    config.train_dataset_name = datasets[DataMode.TRAIN]
 
     model = make_localizer(config)
 
     # now we can set constitutive parameters
-    model.setConstParams(E_VALS, NU_VALS, E_BAR)
+    model.setConstlaw(constlaw.StrainToStress_2phase(E_VALS, NU_VALS), E_BAR)
 
     model = model.to(DEVICE)
     model.inf_device = DEVICE

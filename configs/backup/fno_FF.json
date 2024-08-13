@@ -13,19 +13,19 @@
     "add_bcs_to_iter": true,
     "fno_args": {
         "modes": [
-            16,
-            16
+            -1,
+            -1
         ],
         "activ_type": "gelu",
-        "init_weight_scale": 2,
+        "init_weight_scale": 0.1,
         "normalize": true,
         "use_weight_norm": true,
         "resid_conn": true,
         "latent_channels": 24,
         "normalize_inputs": false,
         "projection_channels": 128,
-        "use_mlp_lifting": true,
+        "use_mlp_lifting": false,
         "init_type": "uniform"
     },
-    "lr_max": 1e-4
+    "lr_max": 5e-3
 }

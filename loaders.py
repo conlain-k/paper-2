@@ -31,13 +31,13 @@ def to_mandel(vec_ab, fac=1.0, swap_abaqus=False):
     vec_mand[..., 2, :, :, :] = vec_ab[..., 2, :, :, :]  # 33
 
     # the factor has two purposes: handle voigt-to-mandel conversion and handle abaqus using engineering shear strain (doubles each term)
-    vec_mand[..., 3, :, :, :] = fac * vec_ab[..., 5, :, :, :]  # 23
+    vec_mand[..., 3, :, :, :] = fac * vec_ab[..., 3, :, :, :]  # 23
     vec_mand[..., 4, :, :, :] = fac * vec_ab[..., 4, :, :, :]  # 31
-    vec_mand[..., 5, :, :, :] = fac * vec_ab[..., 3, :, :, :]  # 12
+    vec_mand[..., 5, :, :, :] = fac * vec_ab[..., 5, :, :, :]  # 12
 
     # swap 3rd and 5th entries since abaqus is weird
     if swap_abaqus:
-        vec_mand[..., [3, 5]] = vec_mand[..., [5, 3]]
+        vec_mand[..., [3, 5], :, :, :] = vec_mand[..., [5, 3], :, :, :]
 
     return vec_mand
 
@@ -71,7 +71,7 @@ class LocalizationDataset(Dataset):
 
         if swap_abaqus:
             # abaqus uses engineering shear strain, moose does not
-            self.fac_strain /= 2
+            self.fac_strain = math.sqrt(2.0) / 2.0
 
     def attach_constlaw(self, constlaw):
         # allows preprocessing using constlaw to convert micro -> stiffness
@@ -185,6 +185,3 @@ class LocalizationDataset(Dataset):
         # assert micro.shape[-3:] == strain.shape[-3:]
 
         return micro, strain, stress
-
-
-#

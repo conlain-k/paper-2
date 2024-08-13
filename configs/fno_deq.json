@@ -1,40 +1,20 @@
 {
     "_description": "DEQ FNO solver",
-    "use_deq": true,
+    "model_type": "FNODEQLocalizer",
+    "_parent": "configs/fno_base.json",
     "use_micro": false,
-    "use_strain": true,
-    "use_bc_strain": true,
-    "use_stress": true,
-    "use_stress_polarization": true,
-    "use_energy": true,
-    "add_fft_encoding": false,
+    "use_C_flat": true,
+    "thermo_feat_args": {},
     "enforce_mean": true,
-    "add_bcs_to_iter": true,
     "scale_output": true,
+    "add_bcs_to_iter": true,
     "deq_args": {
-        "f_solver": "anderson",
-        "b_solver": "anderson",
+        "f_solver": "fixed_point_iter",
+        "b_solver": "fixed_point_iter",
         "f_max_iter": 16,
         "b_max_iter": 16,
         "f_tol": 1e-5,
         "b_tol": 1e-5,
         "use_ift": true
-    },
-    "fno_args": {
-        "modes": [
-            16,
-            16
-        ],
-        "activ_type": "gelu",
-        "init_weight_scale": 0.1,
-        "normalize": true,
-        "use_weight_norm": true,
-        "resid_conn": true,
-        "latent_channels": 24,
-        "normalize_inputs": false,
-        "projection_channels": 128,
-        "use_mlp_lifting": true,
-        "init_type": "uniform"
-    },
-    "lr_max": 5e-4
+    }
 }

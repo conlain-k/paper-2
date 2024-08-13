@@ -26,7 +26,7 @@ k = 2 * PI / N
 
 E_VALS = [120.0, 100 * 120.0]
 NU_VALS = [0.3, 0.3]
-E_BAR = [0.001, 0, 0, 0, 0, 0]
+E_BAR = torch.as_tensor([0.001, 0, 0, 0, 0, 0])
 
 C11, C12, C44 = 200, 100, 200
 
@@ -47,6 +47,9 @@ C_ROT_MOOSE = torch.tensor(
 
 CHECK_TEST = "checkpoints/fno_deq_best.ckpt"
 CONF_TEST = "configs/fno_deq.json"
+
+CHECK_TEST = "checkpoints/model_thermino_2.37M_s16_best.ckpt"
+CONF_TEST = "configs/thermino.json"
 
 
 def batched_vector_grad(a):
@@ -363,28 +366,25 @@ def test_euler_pred():
     # euler_ang = euler_ang.cuda()
 
     conf_args = load_conf_override(CONF_TEST)
+    conf_args["fno_args"]["modes"] = (16, 16)
     # print(conf_args)
     config = Config(**conf_args)
     config.num_voxels = 62
 
     # no need to return residual
     config.return_resid = False
-    config.fno_args["normalize_inputs"] = False
-    config.fno_args["use_mlp_lifting"] = True
+    # config.fno_args["normalize_inputs"] = False
+    # config.fno_args["use_mlp_lifting"] = False
 
     model = make_localizer(config)
 
-    model.setConstParams(E_VALS, NU_VALS, E_BAR)
-
-    del model.greens_op
+    model.setConstlaw(StrainToStress_crystal(C11, C12, C44), E_BAR)
+    model.greens_op = GreensOp(model.constlaw, 62)
 
     # override to set crystalline const law
 
     # pull in saved weights
-    load_checkpoint(CHECK_TEST, model, strict=False)
-
-    model.set_constlaw_crystal(C11, C12, C44)
-    model.greens_op = GreensOp(model.constlaw, 62)
+    model = load_checkpoint(CHECK_TEST, model, strict=True)
 
     # make sure we're ready to eval
     # model = model.cuda()
@@ -394,11 +394,13 @@ def test_euler_pred():
 
     print("running inference!")
 
+    C_field = model.constlaw.compute_C_field(euler_ang[None])
+
     torch.cuda.synchronize()
     start = time.time()
     with torch.inference_mode():
         # evaluate on batch of euler angles
-        strain_pred = model.forward(euler_ang[None])
+        strain_pred = model.forward(C_field, E_BAR)
 
     torch.cuda.synchronize()
     dt = time.time() - start
@@ -406,8 +408,6 @@ def test_euler_pred():
     # print(strain_pred.shape)
 
     print("elapsed time", dt)
-
-    C_field = model.constlaw.compute_C_field(euler_ang[None])
 
     stress_pred = model.constlaw(C_field, strain_pred)
 
@@ -573,9 +573,117 @@ def test_FFT_iters_crystal():
     # print(constlaw.C0_norm(compat_err)[0].shape)
 
 
+def test_FFT_multi_2phase():
+    def get_central_inds(size_new, size_old):
+        # get a slice corresponding to the center of a volume
+        # get new stencil sizes in each direction
+        s1, s2 = size_new[-3], size_new[-2]
+
+        # get midpoints of new weights tensor
+        m1, m2 = s1 // 2, s2 // 2
+
+        print(m1, m2, s1, s2)
+
+        # input is biijk, output is boijk, elem-wise multiply along last
+        # go from center - m to center + m (not including endpoints)
+        inds = np.s_[
+            :,
+            :,
+            m1 - size_old[0] // 2 + 1 : m1 + size_old[0] // 2,
+            m2 - size_old[1] // 2 + 1 : m2 + size_old[1] // 2,
+            0 : size_old[2],
+        ]
+
+        return inds
+
+    def trig_interp(field_old, fac):
+        field_ft = torch.fft.fftshift(
+            torch.fft.fftn(field_old, dim=(-3, -2, -1)), dim=(-3, -2, -1)
+        )
+        nx, ny, nz = field_ft.shape[-3:]
+        new_shape = field_ft.shape[0:-3] + (fac * nx, fac * ny, fac * nz)
+        field_ft_new = field_ft.new_zeros(new_shape)
+        # get central inds to copy into
+        inds = get_central_inds(field_ft_new.shape[-3:], field_ft.shape[-3:])
+        # copy old signal into center
+        field_ft_new[inds] = field_ft
+        # now unshift so that origin is in corner again
+        field_ft_new = torch.fft.ifftshift(field_ft_new)
+
+        return field_ft_new
+
+    m_base = "paper2_16"
+    r_base_16 = "paper2_16_u1_responses"
+    r_base_32 = "paper2_16_u2_responses"
+
+    datasets_16, _ = collect_datasets(m_base, 100.0, r_base=r_base_16)
+    # also get upsampled version for comparison
+    datasets_32, _ = collect_datasets(
+        m_base, 100.0, r_base=r_base_32, upsamp_micro_fac=2
+    )
+
+    dataset_16 = LocalizationDataset(**datasets_16[DataMode.TRAIN])
+    dataset_32 = LocalizationDataset(**datasets_16[DataMode.TRAIN])
+    m_16, eps_FEA_16, sigma_FEA_16 = dataset_16[0:1]
+    m_32, eps_FEA_32, sigma_FEA_32 = dataset_32[0:1]
+
+    m_16 = torch.as_tensor(m_16)
+    eps_FEA_16 = torch.as_tensor(eps_FEA_16)
+    sigma_FEA_16 = torch.as_tensor(sigma_FEA_16)
+
+    m_32 = torch.as_tensor(m_32)
+    eps_FEA_32 = torch.as_tensor(eps_FEA_32)
+    sigma_FEA_32 = torch.as_tensor(sigma_FEA_32)
+
+    constlaw = StrainToStress_2phase([120, 120 * 100], [0.3, 0.3])
+
+    C_field_16 = constlaw.compute_C_field(m_16)
+
+    G_16 = GreensOp(constlaw, 16)
+    G_32 = GreensOp(constlaw, 32)
+
+    def L2_strain_err(eps):
+        # get 2-norm of strain error on 32x32 level (assuming already upsampled)
+        # average L2 norm
+        return ((eps - eps_FEA_32) ** 2).sum(1).sqrt().mean()
+
+    def run_fft_iters(G, C_field, eps_0, max_it=10):
+        eps = eps_0
+        resids_equi = [None] * max_it
+        resids_compat = [None] * max_it
+        for i in range(max_it):
+            eps = G.forward(eps, C_field)
+            sigma = constlaw(C_field, eps)
+
+            if eps.shape != eps_FEA_32.shape:
+                eps_upsamp = trig_interp(eps)
+
+            resid_equi, resid_compat = G.compute_residuals(eps, sigma)
+
+    ax[1].semilogy(x, equi_err)
+    ax[1].set_title("Equilibrium Error (C0)")
+
+    ax[2].semilogy(x, compat_err)
+    ax[2].set_title("Compatibility Error (C0)")
+
+    ax[3].plot(x, abs(C_homog - C_homog_FEA))
+    ax[3].set_title("C_homog error")
+
+    fig.tight_layout()
+    plt.savefig("FFT_convergence_trace.png", dpi=300)
+
+
 def test_FFT_iters_2phase():
 
-    datasets, _ = collect_datasets("paper2_smooth", 100.0)
+    m_base = "paper2_smooth"
+    r_base = None
+
+    m_base = "paper2_16"
+    r_base = "paper2_16_u1_responses"
+    # UPSAMP_MICRO_FAC = 1
+
+    datasets, _ = collect_datasets(m_base, 100.0, r_base=r_base)
+
     dataset = LocalizationDataset(**datasets[DataMode.TRAIN])
     m, eps_FEA, sigma_FEA = dataset[0:1]
 
@@ -660,14 +768,14 @@ def test_FFT_iters_2phase():
 
     print(f"\t C homog FEA is {C_homog_FEA:4f}")
 
-    MAX_ITERS = 200
+    MAX_ITERS = 50
 
-    div_sigma_FT = torch.zeros(200)
-    equi_err = torch.zeros(200)
-    compat_err = torch.zeros(200)
-    C_homog = torch.zeros(200)
+    div_sigma_FT = torch.zeros(MAX_ITERS)
+    equi_err = torch.zeros(MAX_ITERS)
+    compat_err = torch.zeros(MAX_ITERS)
+    C_homog = torch.zeros(MAX_ITERS)
 
-    for i in range(20):
+    for i in range(MAX_ITERS):
         eps = G.forward(eps, C_field)
         sigma = constlaw(C_field, eps)
 
@@ -691,15 +799,20 @@ def test_FFT_iters_2phase():
 
     import matplotlib.pyplot as plt
 
+    print(abs(C_homog - C_homog_FEA))
+
+    plot_cube(eps[0, 0], "fft_2phase_exx.png", cmap="coolwarm")
+    plot_cube(sigma[0, 0], "fft_2phase_sxx.png", cmap="coolwarm")
+
     fig, ax = plt.subplots(1, 4, figsize=(10, 6))
     x = torch.arange(MAX_ITERS)
-    ax[0].plot(x, div_sigma_FT)
+    ax[0].semilogy(x, div_sigma_FT)
     ax[0].set_title("Stress Divergence (FFT)")
 
-    ax[1].plot(x, equi_err)
+    ax[1].semilogy(x, equi_err)
     ax[1].set_title("Equilibrium Error (C0)")
 
-    ax[2].plot(x, compat_err)
+    ax[2].semilogy(x, compat_err)
     ax[2].set_title("Compatibility Error (C0)")
 
     ax[3].plot(x, abs(C_homog - C_homog_FEA))
@@ -713,37 +826,43 @@ def test_deq_convergence():
     conf_args = load_conf_override(CONF_TEST)
 
     config = Config(**conf_args)
-    config.return_deq_trace = True
-    N_MAX = 16
 
-    config.fno_args["normalize_inputs"] = False
-    config.fno_args["use_mlp_lifting"] = True
+    config.num_voxels = 16
+    MAX_ITERS = 16
+
+    # config.fno_args["normalize_inputs"] = False
+    # config.fno_args["use_mlp_lifting"] = False
     # config.deq_args["f_solver"] = "broyden"
     # config.deq_args["f_solver"] = "fixed_point_iter"
 
     model = make_localizer(config)
-    model.setConstParams(E_VALS, NU_VALS, E_BAR)
-    load_checkpoint(CHECK_TEST, model, strict=False)
+    model.setConstlaw(StrainToStress_2phase(E_VALS, NU_VALS), E_BAR)
+    model = load_checkpoint(CHECK_TEST, model, strict=True)
+
     # model = model.cuda()
     # required to get n_states to behave
 
     print(config)
     print(model)
 
-    datasets, _ = collect_datasets("paper2_smooth", 100.0)
+    m_base = "paper2_32"
+    r_base = "paper2_32_u1_responses"
+    UPSAMP_MICRO_FAC = 1
+
+    datasets, _ = collect_datasets(m_base, 100.0, r_base=r_base)
+
     dataset = LocalizationDataset(**datasets[DataMode.VALID])
     m, eps_FEA, sigma_FEA = dataset[PLOT_IND_BAD : PLOT_IND_BAD + 1]
 
     C_field = model.constlaw.compute_C_field(m)
+    config.num_voxels = 32
 
     VM_FEA = VMStress(sigma_FEA)
-
-    print(model.pretraining)
 
     print("Evaluating model")
     # don't store any gradients
     with torch.inference_mode():
-        strain_trace = model._compute_trajectory(m, num_iters=N_MAX)
+        strain_trace = model._compute_trajectory(C_field, E_BAR, num_iters=MAX_ITERS)
     print(strain_trace[0].shape)
     strain_trace = torch.stack(strain_trace, dim=0)
     print(strain_trace.shape)
@@ -781,17 +900,17 @@ def test_deq_convergence():
 
     print("plotting")
     fig, ax = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
-    ax[0].plot(np.arange(N_MAX), strain_errs)
+    ax[0].plot(np.arange(MAX_ITERS), strain_errs)
     ax[0].set_title("Percent Strain Error")
     # ax[0].set_yticks([1, 10, 20, 50],)
     # ax[0].get_yaxis().get_major_formatter().labelOnlyBase = False
 
-    ax[1].plot(np.arange(N_MAX), VM_errs)
+    ax[1].plot(np.arange(MAX_ITERS), VM_errs)
     ax[1].set_title("Percent VM Stress Error")
     # ax[1].set_yticks([1, 10, 20, 50],)
     # ax[1].get_yaxis().get_major_formatter().labelOnlyBase = False
 
-    ax[2].semilogy(np.arange(N_MAX - 1), diff)
+    ax[2].semilogy(np.arange(MAX_ITERS - 1), diff)
     ax[2].set_title("DEQ Residual")
     ax[2].set_xlabel("Iteration")
     ax[2].xaxis.set_major_locator(tck.MultipleLocator())
@@ -800,11 +919,12 @@ def test_deq_convergence():
     plt.savefig("conv_trace.png", dpi=300)
 
 
+# test_FFT_multi_2phase()
 # test_FFT_iters_2phase()
 
 
-test_euler_pred()
 test_deq_convergence()
+test_euler_pred()
 # test_FFT_iters_crystal()
 # prof_C_op()
 # test_constlaw()

@@ -1,0 +1,8 @@
+{
+    "_description": "Thermino solver w/ fft post-iter",
+    "model_type": "ThermINOLocalizer",
+    "_parent": "configs/thermino.json",
+    "hybrid_args": {
+        "use_fft_post_iter": true
+    }
+}

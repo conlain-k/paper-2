@@ -7,5 +7,7 @@
     "use_stress": true,
     "use_stress_polarization": true,
     "use_energy": false,
-    "add_Green_iter": false
+    "add_fft_encoding": false,
+    "use_fft_post_iter": false,
+    "use_fft_pre_iter": false
 }

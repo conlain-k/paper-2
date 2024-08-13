@@ -1,0 +1,20 @@
+{
+    "_description": "Base FNO settings for all models to use",
+    "fno_args": {
+        "modes": [
+            -1,
+            -1
+        ],
+        "activ_type": "gelu",
+        "init_weight_scale": 0.1,
+        "normalize": true,
+        "use_weight_norm": true,
+        "resid_conn": false,
+        "normalize_inputs": true,
+        "projection_channels": 128,
+        "use_mlp_lifting": true,
+        "init_type": "uniform",
+        "latent_channels": 24
+    },
+    "lr_max": 1e-2
+}

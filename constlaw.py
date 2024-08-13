@@ -103,8 +103,12 @@ class StrainToStress_2phase(StrainToStress_base):
         self.lamb_vals = torch.zeros(self.nphases)
         self.mu_vals = torch.zeros(self.nphases)
         # hold stiffnes matrix for each phase
-        self.register_buffer("stiffness_mats", torch.zeros((self.nphases, 6, 6)))
-        self.register_buffer("compliance_mats", torch.zeros((self.nphases, 6, 6)))
+        self.register_buffer(
+            "stiffness_mats", torch.zeros((self.nphases, 6, 6)), persistent=False
+        )
+        self.register_buffer(
+            "compliance_mats", torch.zeros((self.nphases, 6, 6)), persistent=False
+        )
 
         for j in range(self.nphases):
             # compute Lamé constants
@@ -139,8 +143,8 @@ class StrainToStress_crystal(StrainToStress_base):
         C_unrot = cubic_mandel66(C11, C12, C44)
         C_unrot_3333 = C_mandel_to_mat_3x3x3x3(C_unrot)
         # use aniso reference for now (NOT GOOD)
-        self.register_buffer("C_unrot", C_unrot)
-        self.register_buffer("C_unrot_3333", C_unrot_3333)
+        self.register_buffer("C_unrot", C_unrot, persistent=False)
+        self.register_buffer("C_unrot_3333", C_unrot_3333, persistent=False)
 
         # project onto "nearest" isotropic tensor
         # uses Norris' formulas https://msp.org/jomms/2006/1-2/jomms-v1-n2-p02-s.pdf
@@ -336,17 +340,21 @@ def compute_strain_from_displacment(disp, use_FFT_deriv=False):
 
 def compute_strain_energy(strain, stress):
     # first compute elementwise strain ED, then add back a "channel" dimension
-    # add ellipsis to allow for strain-gradient-type calculations
     U = torch.einsum("brxyz, brxyz -> bxyz", strain, stress)
     U = U.unsqueeze(1)
     return U
 
 
 def flatten_stiffness(C_field):
+    # print(C_field.shape)
+    # make sure we have right C field
+    assert C_field.shape[1] == 6
+    assert C_field.shape[2] == 6
     # keep batch and space dimensions
     new_shape = (C_field.shape[0], 21) + C_field.shape[-3:]
     # extract 21 unique coeffs
     C_vec = C_field.new_zeros(new_shape)
+    # print(C_vec.shape)
     # first 6 coeffs take top row
     C_vec[:, 0:6] = C_field[:, 0, :]
     # second row, but skip first
