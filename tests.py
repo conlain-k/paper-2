@@ -1,3 +1,6 @@
+import os 
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "backend:cudaMallocAsync"
+
 import torch
 
 from constlaw import *
@@ -26,7 +29,7 @@ k = 2 * PI / N
 
 E_VALS = [120.0, 100 * 120.0]
 NU_VALS = [0.3, 0.3]
-E_BAR = torch.as_tensor([0.001, 0, 0, 0, 0, 0])
+E_BAR = torch.as_tensor([0.001, 0, 0, 0, 0, 0]).reshape(1,6,1,1,1)
 
 C11, C12, C44 = 200, 100, 200
 
@@ -45,11 +48,20 @@ C_ROT_MOOSE = torch.tensor(
     ]
 )
 
-CHECK_TEST = "checkpoints/fno_deq_best.ckpt"
-CONF_TEST = "configs/fno_deq.json"
+CHECK_FNODEQ ="checkpoints/model_fno_deq_18.9M_s32_best.ckpt"
+CONF_FNODEQ = "configs/fno_deq.json"
 
-CHECK_TEST = "checkpoints/model_thermino_2.37M_s16_best.ckpt"
-CONF_TEST = "configs/thermino.json"
+CHECK_THERMINO = "checkpoints/model_thermino_18.9M_s32_best.ckpt"
+CONF_THERMINO = "configs/thermino.json"
+
+CHECK_THERNOTHER = "checkpoints/model_thermino_notherm_18.9M_s32_best.ckpt"
+CONF_THERNOTHER = "configs/thermino_notherm.json"
+
+CHECK_IFNO = "checkpoints/model_ifno_18.9M_s32_best.ckpt"
+CONF_IFNO = "configs/ifno.json"
+
+CHECK_TEST = CHECK_THERMINO
+CONF_TEST = CONF_THERMINO
 
 
 def batched_vector_grad(a):
@@ -105,7 +117,7 @@ def test_constlaw():
     constlaw = StrainToStress_2phase(E_VALS, NU_VALS)
 
     inds = [0, 5, 120, 690, 1111]
-    micro, strain, stress = dataset[inds]
+    micro,_, strain, stress = dataset[inds]
     check_constlaw(constlaw, micro, strain, stress)
 
 
@@ -366,23 +378,23 @@ def test_euler_pred():
     # euler_ang = euler_ang.cuda()
 
     conf_args = load_conf_override(CONF_TEST)
-    conf_args["fno_args"]["modes"] = (16, 16)
+    # conf_args["fno_args"]["modes"] = (16, 16)
     # print(conf_args)
     config = Config(**conf_args)
-    config.num_voxels = 62
+    config.num_voxels = 32
 
     # no need to return residual
-    config.return_resid = False
+    config.add_resid_loss = False
     # config.fno_args["normalize_inputs"] = False
     # config.fno_args["use_mlp_lifting"] = False
 
     model = make_localizer(config)
 
-    model.setConstlaw(StrainToStress_crystal(C11, C12, C44), E_BAR)
-    model.greens_op = GreensOp(model.constlaw, 62)
+    constlaw = StrainToStress_crystal(C11, C12, C44, E_BAR)
+    model.setConstlaw(constlaw)
+    # model.greens_op = GreensOp(model.constlaw, 62)
 
     # override to set crystalline const law
-
     # pull in saved weights
     model = load_checkpoint(CHECK_TEST, model, strict=True)
 
@@ -400,7 +412,7 @@ def test_euler_pred():
     start = time.time()
     with torch.inference_mode():
         # evaluate on batch of euler angles
-        strain_pred = model.forward(C_field, E_BAR)
+        strain_pred = model.forward(C_field, E_BAR.reshape((-1,6,1,1,1)))
 
     torch.cuda.synchronize()
     dt = time.time() - start
@@ -469,15 +481,15 @@ def test_euler_pred():
         strain_pred[0, 0, :, :, :].detach().cpu(),
         "poly_extrap_exx.png",
         cmap="coolwarm",
-        vmin=strain_11_min,
-        vmax=strain_11_max,
+        # vmin=strain_11_min,
+        # vmax=strain_11_max,
     )
     plot_cube(
         stress_pred[0, 0, :, :, :].detach().cpu(),
         "poly_extrap_sxx.png",
         cmap="coolwarm",
-        vmin=stress_11_min,
-        vmax=stress_11_max,
+        # vmin=stress_11_min,
+        # vmax=stress_11_max,
     )
 
     plot_cube(
@@ -510,6 +522,72 @@ def test_euler_pred():
     # write_dataset_to_h5(stress_pred, "stress", f)
     # write_dataset_to_h5(euler_ang.unsqueeze(0), "euler_ang", f)
 
+
+def test_model_save_load():
+    conf_args = load_conf_override(CONF_TEST)
+    # conf_args["fno_args"]["modes"] = (16, 16)
+    # print(conf_args)
+    config = Config(**conf_args)
+    config.num_voxels = 32
+
+    # no need to return residual
+    config.add_resid_loss = False
+    # config.fno_args["normalize_inputs"] = False
+    # config.fno_args["use_mlp_lifting"] = False
+
+    constlaw = StrainToStress_2phase(E_VALS, NU_VALS, E_BAR)
+
+
+    # make first model
+    model = make_localizer(config)
+    model = load_checkpoint(CHECK_TEST, model, strict=True)
+    model.setConstlaw(constlaw)
+    model.eval()
+    model.cuda()
+
+    TEST_PATH = "checkpoints/test.ckpt"
+
+    # save these (randomly-init) params
+    save_checkpoint(model, None, None, 0, 0, path_override=TEST_PATH, backup_prev=False)
+
+    # now try loading the re-saved model
+    model_2 = make_localizer(config)
+    model_2=  load_checkpoint(TEST_PATH, model_2, strict=True)
+    model_2.setConstlaw(constlaw)
+    model_2.eval()
+    model_2.cuda()
+
+    bc_vals = E_BAR.cuda()
+
+    # make fake inputs to test model
+    fake_inputs = torch.randn(2, 6, 6, 32, 32, 32).cuda()
+
+    print("Comparing model inference results!")
+    with torch.inference_mode():
+        outputs_orig = model(fake_inputs, bc_vals)
+        outputs_new = model_2(fake_inputs, bc_vals)
+
+    assert torch.allclose(outputs_orig, outputs_new)
+
+    # if model.state_dict() == model_2.state_dict():
+    #     print("ok")
+
+    for k in model.state_dict().keys():
+
+        if torch.is_tensor(model.state_dict()[k]):
+            ok = (model.state_dict()[k] == model_2.state_dict()[k]).all()
+        else:
+            ok = model.state_dict()[k] == model_2.state_dict()[k]
+        if not ok:
+            print(f"Key {k} does not match!!")
+            os.remove(TEST_PATH)
+            exit(1)
+
+
+    print("Model save load passed!")
+
+    # clean up after ourselves
+    os.remove(TEST_PATH)
 
 def test_FFT_iters_crystal():
 
@@ -685,7 +763,7 @@ def test_FFT_iters_2phase():
     datasets, _ = collect_datasets(m_base, 100.0, r_base=r_base)
 
     dataset = LocalizationDataset(**datasets[DataMode.TRAIN])
-    m, eps_FEA, sigma_FEA = dataset[0:1]
+    m,bc_vals, eps_FEA, sigma_FEA = dataset[0:1]
 
     # resp_f = h5py.File("/storage/home/hcoda1/3/ckelly84/scratch/outputs/spher_inc_cr100.0_bc0/00000.h5")
     # eps_FEA, sigma_FEA = resp_f["strain"][:], resp_f["stress"][:]
@@ -703,14 +781,6 @@ def test_FFT_iters_2phase():
     m = upsample_field(m, UPSAMP)
     eps_FEA = upsample_field(eps_FEA, UPSAMP)
     sigma_FEA = upsample_field(sigma_FEA, UPSAMP)
-
-    # print(datasets)
-
-    # print(dataset.length)
-
-    # print(dataset[0].shape)
-
-    print(m.shape)
 
     N = m.shape[-1]
 
@@ -821,23 +891,148 @@ def test_FFT_iters_2phase():
     fig.tight_layout()
     plt.savefig("FFT_convergence_trace.png", dpi=300)
 
+def compare_convergences():
+    def setup_model(checkpt_file, config_file):
+        conf_args = load_conf_override(config_file)
+        config = Config(**conf_args)
+        config.num_voxels = 32
+        # config.deq_args["f_solver"] = "fixed_point_iter"
 
-def test_deq_convergence():
-    conf_args = load_conf_override(CONF_TEST)
+
+        model = make_localizer(config)
+        model.setConstlaw(constlaw)
+        load_checkpoint(checkpt_file, model, strict=True)
+        return model
+    
+
+    constlaw = StrainToStress_2phase(E_VALS, NU_VALS, E_BAR) 
+
+    m_base = "paper2_32"
+    r_base = "paper2_32_u1_responses"
+    UPSAMP_MICRO_FAC = 1
+
+    num_test = 100
+    max_iters = 16 + 1
+
+    datasets, _ = collect_datasets(m_base, 100.0, r_base=r_base)
+
+    dataset = LocalizationDataset(**datasets[DataMode.VALID])
+    m, bc_vals, eps_FEA, sigma_FEA = dataset[PLOT_IND_BAD : PLOT_IND_BAD + num_test]
+    eps_FEA = eps_FEA.cuda()
+    sigma_FEA = sigma_FEA.cuda()
+    VM_FEA = VMStress(sigma_FEA)
+
+    C_field = constlaw.compute_C_field(m).cuda()
+    bc_vals = bc_vals.cuda()
+
+    # set up fig info
+    fig, ax = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
+
+    name_to_color = {"thermino": "r", "fno_deq": "g", "ifno":"b"}
+    
+    def eval_model_convergence(model, label=None):
+        model = model.cuda()
+        model = model.train()
+        print(f"Evaluating {model.config.arch_str} convergence")
+        with torch.inference_mode():
+            strain_trace = model._compute_trajectory(C_field, bc_vals, num_iters=max_iters)
+
+            strain_trace = torch.stack(strain_trace, dim=0)
+
+            last_pred = strain_trace[-1]
+            # list of tensors of L2 strain errors relative to FEA
+            strain_errs = torch.stack([
+                100 * ((eps - eps_FEA)**2).sum(dim=1).mean(dim=(-3,-2,-1)).cpu()
+                / model.constlaw.strain_scaling
+                for eps in strain_trace
+            ]).cpu()
+
+            VM_scaling = mean_L1_error(VM_FEA, 0 * VM_FEA).cpu()
+
+            VM_errs = torch.stack([
+                100
+                * (mean_L1_error(VMStress(model.constlaw(C_field, eps)), VM_FEA).cpu()
+                / VM_scaling).squeeze()
+                for eps in strain_trace
+            ]).cpu()
+
+            diff = strain_trace[:-1] - strain_trace[-1]
+            diff = 100 * (diff**2).sum(2).sqrt().mean((-3, -2, -1)).cpu()
+
+        strain_errs[:-1], VM_errs[:-1], diff
+
+        print(strain_errs.shape, VM_errs.shape, diff.shape)
+
+        # take mean and std over instance index (for all iterations)
+        se_mean = strain_errs[:-1].mean(dim=1)
+        (se_min, _), (se_max, _) =  strain_errs[:-1].min(dim=1),  strain_errs[:-1].max(dim=1)
+        ve_mean = VM_errs[:-1].mean(dim=1)
+        (ve_min, _), (ve_max, _) =  VM_errs[:-1].min(dim=1),  VM_errs[:-1].max(dim=1)
+        diff_mean = diff.mean(dim=1)
+        (diff_min, _), (diff_max, _) =  diff.min(dim=1),  diff.max(dim=1)
+
+        # clamp to be non-negative
+        # se_min = torch.clamp(se_min, min=0)
+        # ve_min = torch.clamp(ve_min, min=0)
+        # diff_min = torch.clamp(diff_min, min=0)
+
+        print(se_mean.shape, se_min.shape, se_max.shape)
+
+        xx = np.arange(max_iters-1)
+
+        ax[0].plot(xx, se_mean, "--", c=name_to_color[label], label=label)
+        ax[0].fill_between(xx, se_min, se_max, label=label, alpha=0.3, color=name_to_color[label])
+
+        ax[1].plot(xx, ve_mean, "--", c=name_to_color[label], label=label)
+        ax[1].fill_between(xx, ve_min, ve_max, label=label, alpha=0.3, color=name_to_color[label])
+
+        ax[2].plot(xx, diff_mean, "--", c=name_to_color[label], label=label)
+        ax[2].fill_between(xx, diff_min, diff_max, label=label, alpha=0.3, color=name_to_color[label])
+
+        ax[2].set_yscale('log')
+
+    model_thermino = setup_model(CHECK_THERMINO, CONF_THERMINO)
+
+    eval_model_convergence(model_thermino, "thermino")
+
+
+    model_deq = setup_model(CHECK_FNODEQ, CONF_FNODEQ)
+
+    eval_model_convergence(model_deq, "fno_deq")
+
+
+    # model_deq = setup_model(CHECK_IFNO, CONF_IFNO)
+
+    # eval_model_convergence(model_deq, "ifno")
+
+
+    ax[0].legend()
+    ax[0].set_title("Percent RMS Strain Error")
+    ax[1].legend()
+    ax[1].set_title("Percent L1 VM Stress Error")
+    ax[2].legend()
+    ax[2].set_title("DEQ Residual")
+    ax[2].set_xlabel("Iteration")
+    ax[2].xaxis.set_major_locator(tck.MultipleLocator())
+    plt.tight_layout()
+    plt.legend
+    plt.savefig("convergence_comparison.png", dpi=300)
+
+
+def test_iter_convergence():
+    conf_args = load_conf_override(CONF_THERMINO)
 
     config = Config(**conf_args)
 
-    config.num_voxels = 16
-    MAX_ITERS = 16
+    config.num_voxels = 32
+    MAX_ITERS = 16 + 1
 
-    # config.fno_args["normalize_inputs"] = False
-    # config.fno_args["use_mlp_lifting"] = False
-    # config.deq_args["f_solver"] = "broyden"
-    # config.deq_args["f_solver"] = "fixed_point_iter"
-
+    config.add_resid_loss = False
+  
+    constlaw = StrainToStress_2phase(E_VALS, NU_VALS, E_BAR)
     model = make_localizer(config)
-    model.setConstlaw(StrainToStress_2phase(E_VALS, NU_VALS), E_BAR)
-    model = load_checkpoint(CHECK_TEST, model, strict=True)
+    model.setConstlaw(constlaw)
+    load_checkpoint(CHECK_THERMINO, model, strict=True)
 
     # model = model.cuda()
     # required to get n_states to behave
@@ -852,20 +1047,35 @@ def test_deq_convergence():
     datasets, _ = collect_datasets(m_base, 100.0, r_base=r_base)
 
     dataset = LocalizationDataset(**datasets[DataMode.VALID])
-    m, eps_FEA, sigma_FEA = dataset[PLOT_IND_BAD : PLOT_IND_BAD + 1]
+    m, bc_vals, eps_FEA, sigma_FEA = dataset[PLOT_IND_BAD : PLOT_IND_BAD + 1]
+
 
     C_field = model.constlaw.compute_C_field(m)
-    config.num_voxels = 32
+    # config.num_voxels = 32
 
     VM_FEA = VMStress(sigma_FEA)
+
+    base_pred = model.forward(C_field, bc_vals)
 
     print("Evaluating model")
     # don't store any gradients
     with torch.inference_mode():
-        strain_trace = model._compute_trajectory(C_field, E_BAR, num_iters=MAX_ITERS)
-    print(strain_trace[0].shape)
+        strain_trace = model._compute_trajectory(C_field, bc_vals, num_iters=MAX_ITERS)
+    # print(strain_trace[0].shape)
     strain_trace = torch.stack(strain_trace, dim=0)
-    print(strain_trace.shape)
+
+    last_pred = strain_trace[-1]
+    last_pred = base_pred
+    # print(strain_trace.shape)
+    print("strain FEA", eps_FEA.mean((-3,-2,-1,0)),eps_FEA.std((-3,-2,-1,0)))
+    print("strain pred", last_pred.mean((-3,-2,-1,0)),last_pred.std((-3,-2,-1,0)))
+
+    print("stress FEA", sigma_FEA.mean((-3,-2,-1,0)),eps_FEA.std((-3,-2,-1,0)))
+    print("stress pred", model.constlaw(C_field, last_pred).mean((-3,-2,-1,0)),last_pred.std((-3,-2,-1,0)))
+
+    print(last_pred[:, 0].squeeze().shape)
+    plot_cube(last_pred[:, 0].squeeze(), "convergence_last.png")
+    plot_cube(eps_FEA[:, 0,...].squeeze(), "conv_last_FEA.png")
 
     print("Computing errors")
     # compute L1 errors as well
@@ -900,12 +1110,12 @@ def test_deq_convergence():
 
     print("plotting")
     fig, ax = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
-    ax[0].plot(np.arange(MAX_ITERS), strain_errs)
+    ax[0].plot(np.arange(MAX_ITERS-1), strain_errs[:-1])
     ax[0].set_title("Percent Strain Error")
     # ax[0].set_yticks([1, 10, 20, 50],)
     # ax[0].get_yaxis().get_major_formatter().labelOnlyBase = False
 
-    ax[1].plot(np.arange(MAX_ITERS), VM_errs)
+    ax[1].plot(np.arange(MAX_ITERS-1), VM_errs[:-1])
     ax[1].set_title("Percent VM Stress Error")
     # ax[1].set_yticks([1, 10, 20, 50],)
     # ax[1].get_yaxis().get_major_formatter().labelOnlyBase = False
@@ -923,8 +1133,11 @@ def test_deq_convergence():
 # test_FFT_iters_2phase()
 
 
-test_deq_convergence()
+# test_model_save_load()
 test_euler_pred()
+test_iter_convergence()
+compare_convergences()
+# test_super_res()
 # test_FFT_iters_crystal()
 # prof_C_op()
 # test_constlaw()

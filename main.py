@@ -1,3 +1,8 @@
+import os
+# os.environ["WANDB_SILENT"] = "true"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "backend:cudaMallocAsync"
+
+import wandb
 import torch
 from torch.utils.data import DataLoader
 
@@ -14,7 +19,6 @@ from math import ceil
 
 import pprint
 
-import wandb, os
 
 import argparse
 
@@ -35,8 +39,6 @@ parser.add_argument(
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.enabled = True
 
-os.environ["WANDB_SILENT"] = "true"
-
 import logging
 
 logger = logging.getLogger("wandb")
@@ -56,9 +58,9 @@ USING_ABAQUS_DATASET = False
 
 UPSAMP_MICRO_FAC = 2
 
-m_base = "paper2_16"
-r_base = "paper2_16_u1_responses"
-UPSAMP_MICRO_FAC = 1
+# m_base = "paper2_16"
+# r_base = "paper2_16_u1_responses"
+# UPSAMP_MICRO_FAC = 1
 
 # m_base = "paper2_32"
 # r_base = "paper2_32_u1_responses"
@@ -113,7 +115,7 @@ if __name__ == "__main__":
     valid_loader = load_data(config, DataMode.VALID)
 
     # NOTE assumes that second-to-last strain dimension is a spatial one
-    num_voxels = train_loader.dataset[0][1].shape[-2]
+    num_voxels = train_loader.dataset[0][0].shape[-2]
     config.num_voxels = num_voxels
 
     # config.fno_args["modes"] = modes_new
@@ -122,8 +124,10 @@ if __name__ == "__main__":
 
     model = make_localizer(config)
 
+    constlaw=constlaw.StrainToStress_2phase(E_VALS, NU_VALS, E_BAR)
+
     # now we can set constitutive parameters
-    model.setConstlaw(constlaw.StrainToStress_2phase(E_VALS, NU_VALS), E_BAR)
+    model.setConstlaw(constlaw)
 
     model = model.to(DEVICE)
     model.inf_device = DEVICE

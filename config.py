@@ -30,7 +30,7 @@ class Config:
     arch_str: str = ""
     model_type: str = None
 
-    num_epochs: int = 200
+    num_epochs: int = 100
     lr_max: float = 1e-3
 
     # whether to override lambdas and balance loss terms manually
@@ -51,7 +51,7 @@ class Config:
 
     # use regular L2 norm (rather than squared)
     # adds cost / complexity, but makes balancing terms easier
-    use_sqrt_loss: bool = False
+    # use_sqrt_loss: bool = False
 
     # args when thermo features are used
     # "use_strain": None
@@ -64,8 +64,8 @@ class Config:
     loader_args: dict = field(
         default_factory=lambda: {
             DataMode.TRAIN: {"batch_size": 16, "shuffle": True, "num_workers": 1},
-            DataMode.VALID: {"batch_size": 256, "shuffle": False, "num_workers": 1},
-            DataMode.TEST: {"batch_size": 256, "shuffle": False, "num_workers": 1},
+            DataMode.VALID: {"batch_size": 128, "shuffle": False, "num_workers": 1},
+            DataMode.TEST: {"batch_size": 128, "shuffle": False, "num_workers": 1},
         }
     )
 
@@ -73,7 +73,12 @@ class Config:
     enforce_mean: bool = True
     add_bcs_to_iter: bool = True
 
-    return_resid: bool = False
+    # penalize DEQ residual of solution?
+    add_resid_loss: bool = False
+
+    # penalize DEQ residual of true solution?
+    penalize_teacher_resid: bool = False
+    use_wacky_loss: bool = False
 
     # Should we use a fixed maximum # iters, or randomize over training
     # only used for DEQ-type models

@@ -12,6 +12,8 @@ import inspect
 
 import h5py
 
+import shutil
+
 from enum import Enum
 
 
@@ -163,20 +165,29 @@ def print_activ_map(x):
         del x
 
 
-def save_checkpoint(model, optim, sched, epoch, loss, best=False, ema_model=None):
+def save_checkpoint(model, optim, sched, epoch, loss, best=False, ema_model=None, path_override=None, backup_prev=True):
     print(f"Saving model for epoch {epoch}!")
-    path = model.config.get_save_str(model, epoch, best=best)
+    if path_override is None:
+        path = model.config.get_save_str(model, epoch, best=best)
+    else:
+        path = path_override
+
+    if os.path.isfile(path) and backup_prev:
+        # always save at least one backup
+        root, ext = os.path.splitext(path)
+        backup_path = f"{root}_prev{ext}"
+        shutil.move(path, backup_path)
 
     torch.save(
         {
             "epoch": epoch,
             "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optim.state_dict(),
-            "scheduler_state_dict": sched.state_dict(),
+            "optimizer_state_dict": optim.state_dict() if optim is not None else {},
+            "scheduler_state_dict": sched.state_dict() if sched is not None else {},
             "last_train_loss": loss,
             "conf_file": model.config._conf_file,
             # save ema model in addition (if one exists)
-            "ema_state_dict": ema_model.state_dict() if ema_model is not None else None,
+            "ema_state_dict": ema_model.state_dict() if ema_model is not None else {},
         },
         path,
     )
@@ -186,18 +197,21 @@ def load_checkpoint(path, model, optim=None, sched=None, strict=True, device=Non
     # loads checkpoint into a given model and optimizer
     checkpoint = torch.load(path, map_location=device)
 
-    del_keys = [
-        "eps_bar",
-        "scaled_average_strain",
-        "constlaw.stiffness_mats",
-        "constlaw.compliance_mats",
-        "greens_op.G_freq",
-        "greens_op.constlaw.stiffness_mats",
-        "greens_op.constlaw.compliance_mats",
-    ]
-    for k in del_keys:
-        if k in checkpoint["model_state_dict"].keys():
-            del checkpoint["model_state_dict"][k]
+    # print("keys", checkpoint.keys())
+    # print("keys_model", checkpoint["model_state_dict"].keys())
+
+    # del_keys = [
+    #     "eps_bar",
+    #     "scaled_average_strain",
+    #     "constlaw.stiffness_mats",
+    #     "constlaw.compliance_mats",
+    #     "greens_op.G_freq",
+    #     "greens_op.constlaw.stiffness_mats",
+    #     "greens_op.constlaw.compliance_mats",
+    # ]
+    # for k in del_keys:
+    #     if k in checkpoint["model_state_dict"].keys():
+    #         del checkpoint["model_state_dict"][k]
 
     model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
 
@@ -210,7 +224,7 @@ def load_checkpoint(path, model, optim=None, sched=None, strict=True, device=Non
         sched.load_state_dict(checkpoint["scheduler_state_dict"], strict=strict)
 
     # load ema model as well
-    if checkpoint.get("ema_state_dict") is not None:
+    if checkpoint.get("ema_state_dict"):
         ema_model = torch.optim.swa_utils.AveragedModel(
             model, multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(0.99)
         )
@@ -222,7 +236,7 @@ def load_checkpoint(path, model, optim=None, sched=None, strict=True, device=Non
     epoch = checkpoint["epoch"]
     loss = checkpoint["last_train_loss"]
 
-    print(f"Loading model for epoch {epoch}! Last loss was {loss:.3f}")
+    print(f"Loading model for epoch {epoch}, original conf was {checkpoint['conf_file']}! Last loss was {loss:.3f}")
 
     return eval_model
 
@@ -325,20 +339,21 @@ def check_constlaw(constlaw, micro, strain, stress):
     # Plot z=const slice
     sind = s_[:, :, z]
 
-    print(f"Err mean {err.mean()} std {err.std()} min {err.min()} max {err.max()}")
-
-    print("stress true", stress[b, :, x, y, z])
-    print("stress comp", stress_comp[b, :, x, y, z])
-
-    print("strain vals", strain[b, :, x, y, z])
-    print("strain means", strain.mean((0, -3, -2, -1)))
-
     # print(f"Each component err mean is: {err.mean(dim=(0, -1, -2, -3))}")
 
     ok = torch.allclose(stress_comp, stress, rtol=1e-8, atol=2e-5)
 
     # if things don't match, plot for debugging purposes
     if not ok:
+
+        print(f"Err mean {err.mean()} std {err.std()} min {err.min()} max {err.max()}")
+
+        print("stress true", stress[b, :, x, y, z])
+        print("stress comp", stress_comp[b, :, x, y, z])
+
+        print("strain vals", strain[b, :, x, y, z])
+        print("strain means", strain.mean((0, -3, -2, -1)))
+
         plot_pred(
             -1,
             micro[b, 1][sind],
@@ -367,11 +382,3 @@ def check_constlaw(constlaw, micro, strain, stress):
 
     # make sure things match
     assert ok
-
-
-def compute_quants(model, strain, C_field):
-    stress = model.constlaw(C_field, strain)
-    stress_polar = model.constlaw.stress_pol(strain, C_field)
-    energy = compute_strain_energy(strain, stress)
-
-    return stress, stress_polar, energy

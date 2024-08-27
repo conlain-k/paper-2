@@ -16,7 +16,7 @@ H5_CACHE_SIZE = 4 * 1024 * 1024 * 1024
 FAC_STRESS = math.sqrt(2.0)
 FAC_STRAIN = math.sqrt(2.0)
 
-E_BAR_DEFAULT = torch.as_tensor([0.001, 0, 0, 0, 0, 0])
+E_BAR_DEFAULT = torch.as_tensor([0.001, 0, 0, 0, 0, 0]).reshape(1,6,1,1,1)
 
 E_VALS_DEFAULT = [120.0, 100 * 120.0]
 NU_VALS_DEFAULT = [0.3, 0.3]
@@ -184,4 +184,14 @@ class LocalizationDataset(Dataset):
         # print(micro.shape, strain.shape)
         # assert micro.shape[-3:] == strain.shape[-3:]
 
-        return micro, strain, stress
+        # expand along batch size (if one exists)
+        # bc_vals = strain.new_ones(
+        #     strain.shape[-5:-3] + (1, 1, 1)
+        # )
+        bc_vals = E_BAR_DEFAULT.expand(strain.shape[-5:-3] + (1, 1, 1))
+
+        # print("strain", strain.shape)
+        # print("bc", bc_vals.shape)
+        # print("bcv", bc_vals.mean((-3, -2, -1)))
+
+        return micro, bc_vals, strain, stress

@@ -17,7 +17,9 @@ class GreensOp(torch.nn.Module):
         self.N = N
 
         # precompute Green's op in freq space
-        self.register_buffer("G_freq", self._compute_coeffs(self.N, willot=True), persistent=False)
+        self.register_buffer(
+            "G_freq", self._compute_coeffs(self.N, willot=True), persistent=False
+        )
 
         # freqs_base = self.get_freqs(N, willot=False)
         # freqs_willot = self.get_freqs(N, willot=True)
@@ -127,10 +129,12 @@ class GreensOp(torch.nn.Module):
 
         # Make sure zero-freq terms are actually zero for each component
         G[..., 0, 0, 0] = 0
-        # if even, zero out Nyquist freq as well (following Willot)
         if N % 2 == 0:
             N_half = N // 2
-            G[..., N_half, N_half, N_half] = 0
+            # if even, zero out all Nyquist freqs as well (following Willot)
+            G[..., N_half, :, :] = 0
+            G[..., :, N_half, :] = 0
+            G[..., :, :, N_half] = 0
 
         return G
 

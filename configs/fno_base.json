@@ -10,7 +10,7 @@
         "normalize": true,
         "use_weight_norm": true,
         "resid_conn": false,
-        "normalize_inputs": true,
+        "normalize_inputs": false,
         "projection_channels": 128,
         "use_mlp_lifting": true,
         "init_type": "uniform",
