@@ -9,17 +9,21 @@ from helpers import print_activ_map
 from math import ceil
 
 
-def make_localizer(config):
+def make_localizer(config, constlaw):
     try:
         localizer_type = eval(config.model_type)
-        return localizer_type(config)
+        return localizer_type(config, constlaw)
     except:
-        raise (ValueError(f"Error constructing model type: {config.model_type}"))
+        raise (
+            ValueError(
+                f"Error constructing model type: {config.model_type} with constlaw {constlaw}"
+            )
+        )
 
 
 class LocalizerBase(torch.nn.Module):
     # base class for localization models
-    def __init__(self, config):
+    def __init__(self, config, constlaw):
         super().__init__()
         # cache config
         self.config = config
@@ -44,14 +48,26 @@ class LocalizerBase(torch.nn.Module):
             **config.fno_args,
         )
 
-        # self.register_buffer("eps_bar", torch.zeros(6), persistent=False)
+        # set constlaw and greens operator appropriately (but not scalings yet)
+        self.constlaw = constlaw
+        # no-op green's operator for now
+        self.greens_op = GreensOp(self.constlaw, self.config.num_voxels)
 
-        # empty for now
-        self.constlaw = None
-        self.greens_op = None
+        # compile submodules to maximize performance
+        # note that the DEQ code doesn't always behave well with compile, so we don't compile the whole module
+
+        # print("Compiling submodules!")
+        # self.fno = toch.compile(self.fno)
+        # self.constlaw = torrch.compile(self.constlaw)
 
         # default to output strain (6 channels)
         self.output_channels = 6
+
+        # these scalings should be stored persistently for trained models and set before training via compute_scalings
+        self.register_buffer("stiffness_scaling", torch.tensor(1.0))
+        self.register_buffer("strain_scaling", torch.tensor(1.0))
+        self.register_buffer("stress_scaling", torch.tensor(1.0))
+        self.register_buffer("energy_scaling", torch.tensor(1.0))
 
     def count_input_channels(self):
         channels = 0
@@ -69,26 +85,27 @@ class LocalizerBase(torch.nn.Module):
             therm_feat = self.config.thermo_feat_args
             therm_channels = 0
             if therm_feat.get("use_strain"):
-                channels += 6
+                therm_channels += 6
 
             # stress-type features
             if therm_feat.get("use_stress"):
-                channels += 6
+                therm_channels += 6
             if therm_feat.get("use_stress_polarization"):
-                channels += 6
+                therm_channels += 6
 
             # other thermo features
             if therm_feat.get("use_energy"):
-                channels += 1
+                therm_channels += 1
 
-            if therm_feat.get("add_fft_encoding"):
+            if self.config.hybrid_args.get("add_fft_encoding"):
                 # add FFT prediction and features as well
                 therm_channels *= 2
             channels += therm_channels
 
         return channels
 
-    def setConstlaw(self, constlaw):
+    def overrideConstlaw(self, constlaw):
+        # allows overriding a const law if we got it from a checkpoint
         # attach this constlaw to model
         self.constlaw = constlaw
         # also compute a corresponding Green's operator for FFT-type methods
@@ -117,9 +134,12 @@ class LocalizerBase(torch.nn.Module):
 
         return feat
 
-    def thermo_encode(self, C_field, eps_bar, strain):
+    def thermo_encode(self, C_field, eps_bar, strain, add_nontherm=True):
         # build non-thermodynamic features first
-        feat = self.nonthermo_encode(C_field, eps_bar)
+        if add_nontherm:
+            feat = self.nonthermo_encode(C_field, eps_bar)
+        else:
+            feat = []
 
         thermo_args = self.config.thermo_feat_args
 
@@ -138,12 +158,15 @@ class LocalizerBase(torch.nn.Module):
         if thermo_args.get("use_energy"):
             if stress is None:
                 stress = strain_to_stress(C_field, strain)
+            # print(strain.shape, stress.shape)
             strain_energy = compute_strain_energy(strain, stress)
             feat.append(strain_energy)
 
         if self.config.thermo_feat_args.get("use_stress_polarization"):
             # C_field = self.lazy_m_to_C(m, C_field)
-            stress_polar = self.constlaw.stress_pol(strain, C_field, scaled=True)
+            stress_polar = self.constlaw.stress_pol(
+                strain, C_field, ref_scaling=self.stiffness_scaling
+            )
             # negate stress polarization to get positive-ish values
             feat.append(stress_polar)
 
@@ -155,13 +178,13 @@ class LocalizerBase(torch.nn.Module):
 
     def _encode(self, C_field, eps_bar):
         # always normalize stiffnesses before putting into NN
-        C_field = self.constlaw.scale_stiffness(C_field)
-        eps_bar = self.constlaw.scale_strain(eps_bar)
+        C_field = self.scale_stiffness(C_field)
+        eps_bar = self.scale_strain(eps_bar)
         return torch.concatenate(self.nonthermo_encode(C_field, eps_bar), dim=1)
 
     def _postprocess(self, x, eps_bar, scale):
         if scale:
-            x = self.constlaw.unscale_strain(x)
+            x = self.unscale_strain(x)
 
         # do we enforce mean is correct directly?
         if self.config.enforce_mean:
@@ -172,11 +195,41 @@ class LocalizerBase(torch.nn.Module):
 
         return x
 
+    def compute_scalings(self, eps_bar):
+        # compute scalings for stiffness and strain, then downstream scalings
+        # be careful overriding this on an already trained model
+        frob = lambda x: (x**2).sum().sqrt()
+        # print("Computing scalings!")
+        self.stiffness_scaling = frob(self.constlaw.C_ref)
+        self.strain_scaling = frob(torch.as_tensor(eps_bar))
+
+        # compute other scalings downstream of this one
+        self.stress_scaling = self.stiffness_scaling * self.strain_scaling
+        self.energy_scaling = self.stress_scaling * self.strain_scaling
+
+    def scale_strain(self, strain):
+        return strain / self.strain_scaling
+
+    def unscale_strain(self, strain):
+        return strain * self.strain_scaling
+
+    def scale_stress(self, stress):
+        return stress / self.stress_scaling
+
+    def unscale_stress(self, stress):
+        return stress * self.stress_scaling
+
+    def scale_stiffness(self, stiffness):
+        return stiffness / self.stiffness_scaling
+
+    def unscale_stiffness(self, stiffness):
+        return stiffness * self.stiffness_scaling
+
 
 class FeedForwardLocalizer(LocalizerBase):
     # base class for localization models
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config, constlaw):
+        super().__init__(config, constlaw)
 
     def forward(self, C_field, eps_bar):
         # rescale stiffness and encode
@@ -192,8 +245,8 @@ class FeedForwardLocalizer(LocalizerBase):
 
 
 class IFNOLocalizer(LocalizerBase):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config, constlaw):
+        super().__init__(config, constlaw)
         self.num_passes = config.num_ifno_iters
         # quasi-step-size used in IFNO paper
         self.dt = 1.0 / self.num_passes
@@ -215,7 +268,7 @@ class IFNOLocalizer(LocalizerBase):
         x = self._postprocess(x, eps_bar, scale=self.config.scale_output)
 
         return x
-    
+
     # compute trajectory in output space across IFNO iterations
     def _compute_trajectory(self, C_field, eps_bar, h0=None, num_iters=32):
         """Compute trajectory of solution (projected into output space) across iterations"""
@@ -229,18 +282,20 @@ class IFNOLocalizer(LocalizerBase):
                 # apply IFNO update
                 x = x + self.dt * self.fno.middle(x)
                 # postprocess output for later return
-                traj.append(self._postprocess(self.fno.proj(x), eps_bar, scale=self.config.scale_output))
-                
+                traj.append(
+                    self._postprocess(
+                        self.fno.proj(x), eps_bar, scale=self.config.scale_output
+                    )
+                )
 
             print("traj has length", len(traj))
-
 
             return traj
 
 
 class FNODEQLocalizer(LocalizerBase):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config, constlaw):
+        super().__init__(config, constlaw)
         self.deq = get_deq(config.deq_args)
 
     def _sample_num_iters(self):
@@ -292,7 +347,7 @@ class FNODEQLocalizer(LocalizerBase):
         h0 = self._initStrain(inputs_encoded).detach()
 
         # solve FP over h system
-        hstar, _ = self.deq(F, h0, solver_kwargs=self._sample_num_iters())
+        hstar, _ = self.deq(F, h0, z_kwargs=self._sample_num_iters())
 
         # torchdeq is tricky and returns a tuple of trajectories, so we need to pull out last one
         h_last = hstar[-1]
@@ -315,7 +370,7 @@ class FNODEQLocalizer(LocalizerBase):
             F = lambda h: self.F(h, inputs_encoded)
 
             # start w/ all zeros initial latent guess unless we decided otherwise
-            h0 = self._initStrain(inputs_encoded) * 0.
+            h0 = self._initStrain(inputs_encoded)  # * 0.0
 
             # indexing starts at 3 in torchdeq (1-based, plus ignores first two iterates)
             indexing = torch.arange(3, num_iters + 3).tolist()
@@ -336,26 +391,27 @@ class FNODEQLocalizer(LocalizerBase):
 
 class ThermINOLocalizer(FNODEQLocalizer):
     # thermo-informed implicit neural operator deq
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config, constlaw):
+        super().__init__(config, constlaw)
         self.deq = get_deq(config.deq_args)
 
     def _initStrain(self, Ceps):
         C_field, eps_bar = Ceps
         bs, (nx, ny, nz) = C_field.shape[0], C_field.shape[-3:]
         # start w/ avg strain for initial guess
+        return eps_bar.expand(bs, 6, nx, ny, nz)
         return C_field.new_ones(bs, 6, nx, ny, nz) * eps_bar
 
     def _encodeInput(self, C_field, eps_bar):
         # do scaling here since we aren't calling up to parent class _encode()
-        C_field = self.constlaw.scale_stiffness(C_field)
-        eps_bar = self.constlaw.scale_strain(eps_bar)
+        C_field = self.scale_stiffness(C_field)
+        eps_bar = self.scale_strain(eps_bar)
 
         return C_field, eps_bar
 
     def _decodeOutput(self, x, eps_bar):
         # do scaling here since we aren't calling up to parent class _postprocess()
-        return self.constlaw.unscale_strain(x)
+        return self.unscale_strain(x)
 
     def F(self, h, Ceps):
         # here x is a (C_field, eps_bar) tuple and h is a candidate strain field
@@ -377,8 +433,9 @@ class ThermINOLocalizer(FNODEQLocalizer):
 
             # don't differentiate through FFT update to stabilize / reduce memory overhead
             eps_ms = eps_ms.detach()
-            z_ms = self.thermo_encode(C_field, eps_bar, eps_ms)
+            z_ms = self.thermo_encode(C_field, eps_bar, eps_ms, add_nontherm=False)
 
+            # print("zshape", z.shape, z_ms.shape)
             # stack on M-S features after current features
             z = torch.concatenate([z, z_ms], dim=1)
 

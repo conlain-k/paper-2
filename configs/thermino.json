@@ -3,11 +3,11 @@
     "model_type": "ThermINOLocalizer",
     "_parent": "configs/fno_base.json",
     "use_micro": false,
-    "use_C_flat": true,
+    "use_C_flat": false,
     "thermo_feat_args": {
         "use_strain": true,
         "use_stress": true,
-        "use_stress_polarization": true,
+        "use_stress_polarization": false,
         "use_energy": true
     },
     "enforce_mean": true,
@@ -16,8 +16,8 @@
     "deq_args": {
         "f_solver": "anderson",
         "b_solver": "anderson",
-        "f_max_iter": 8,
-        "b_max_iter": 8,
+        "f_max_iter": 12,
+        "b_max_iter": 12,
         "f_tol": 1e-5,
         "b_tol": 1e-5,
         "use_ift": true

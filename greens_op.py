@@ -16,10 +16,11 @@ class GreensOp(torch.nn.Module):
         # how many voxels in each direction?
         self.N = N
 
-        # precompute Green's op in freq space
-        self.register_buffer(
-            "G_freq", self._compute_coeffs(self.N, willot=True), persistent=False
-        )
+        if N > 0:
+            # precompute Green's op in freq space
+            self.register_buffer(
+                "G_freq", self._compute_coeffs(self.N, willot=True), persistent=False
+            )
 
         # freqs_base = self.get_freqs(N, willot=False)
         # freqs_willot = self.get_freqs(N, willot=True)
@@ -57,6 +58,8 @@ class GreensOp(torch.nn.Module):
         # integer freq terms, assuming unit domain length
         q = torch.fft.fftfreq(N, d=h)
 
+        # print(q)
+
         # print("q is", q)
         # get it as 3 terms
         q_v = torch.meshgrid(q, q, q, indexing="ij")
@@ -65,7 +68,7 @@ class GreensOp(torch.nn.Module):
         # print("shape", q.shape, q_vec.shape)
 
         if willot:
-            # print("Using willot terms!")
+            print("Using willot terms!")
 
             # compute phi term from Janus implementation
             # https://github.com/sbrisard/janus/blob/a6196a025fee6bf0f3eb5e636a6b2f895ca6fbc9/janus/green.pyx#L999
@@ -90,8 +93,7 @@ class GreensOp(torch.nn.Module):
     #         i, j, k, h = ind
     #         G[k, h, i, j] = self._G(q, ind)
 
-    def _compute_coeffs(self, N, willot=False):
-
+    def _compute_coeffs(self, N, willot):
         # two coefficients in Green's op calculation
         coef_1 = 1 / (4 * self.constlaw.mu_0)
         coef_2 = (self.constlaw.lamb_0 + self.constlaw.mu_0) / (
@@ -99,6 +101,8 @@ class GreensOp(torch.nn.Module):
         )
 
         q = self.get_freqs(N, willot=willot)
+
+        print(q.shape)
         normq = (q**2).sum(dim=0, keepdim=True).sqrt()
         # fix norm term to not divide by zero
         normq[:, 0, 0, 0] = 1
@@ -138,7 +142,10 @@ class GreensOp(torch.nn.Module):
 
         return G
 
-    def forward(self, eps_k, C_field, use_polar=True):
+    def forward(self, eps_k, C_field, use_polar=False):
+
+        # TODO more involved frequency checking
+        assert self.N > 0
         # given current strain, compute a new one
         if use_polar:
 
@@ -151,15 +158,65 @@ class GreensOp(torch.nn.Module):
             # print(self.constlaw.C_ref_unscaled)
             # print(self.constlaw.C_ref)
             E_bar = eps_k.mean(dim=(-3, -2, -1), keepdim=True)
+
             eps_kp = E_bar - self.apply_gamma(tau)
 
         else:
             sigma = self.constlaw(C_field, eps_k)
             eps_pert = self.apply_gamma(sigma)
             # eps_pert = eps_pert - eps_pert.mean(dim=(-3, -2, -1), keepdim=True)
-            eps_kp = eps_k - eps_pert
+            eps_kp = eps_k + eps_pert
 
+        # print(eps_kp.mean((-3, -2, -1)))
         return eps_kp
+
+    def apply_gamma_new(self, tau):
+        # uses Schneider Eq 2.52
+        # apply green's op directly to a given symmetric tensor field (via FFT)
+        # assumes size is b,6,x,y,z
+
+        tau = mandel_to_mat_3x3(tau)
+        tau_ft = torch.fft.fftn(tau, dim=(-3, -2, -1))
+
+        k = self.get_freqs(self.N, willot=False).to(tau.device) * 2 * PI
+
+        normk = (k**2).sum(dim=0, keepdim=True).sqrt()
+
+        # fix norm term to not divide by zero
+        normk[:, 0, 0, 0] = 1
+
+        q = k / normk
+        q = q.cfloat()
+        # print(tau_ft.dtype, q.dtype)
+        # print(tau_ft.device, q.device)
+        # print(tau_ft.shape, q.shape)
+
+        f = torch.einsum("bijxyz, jxyz-> bixyz", tau_ft, q.conj())
+        s = torch.einsum("bixyz, ixyz-> bxyz", f, q.conj()).unsqueeze(1)
+
+        # get displacement term
+        u = (s * q.conj() / 2.0 - f) / self.constlaw.mu_0
+
+        # take gradient of u
+        gradu = torch.einsum("bixyz, jxyz -> bijxyz", u, q)
+
+        print(gradu.shape)
+
+        # symmetric strain gradient
+        eps_ft = (gradu + gradu.transpose(1, 2)) / 2.0
+        # back to Mandel notation before inverse FFT
+        eps_ft = mat_3x3_to_mandel(eps_ft)
+
+        if self.N % 2 == 0:
+            N_half = self.N // 2
+            # if even, zero out all Nyquist freqs as well (following Willot)
+            eps_ft[..., N_half, :, :] = 0
+            eps_ft[..., :, N_half, :] = 0
+            eps_ft[..., :, :, N_half] = 0
+
+        eps = torch.fft.ifftn(eps_ft, dim=(-3, -2, -1), s=tau.shape[-3:])
+
+        return -eps.real
 
     def apply_gamma(self, x):
         # apply green's op directly to a given symmetric tensor field (via FFT)

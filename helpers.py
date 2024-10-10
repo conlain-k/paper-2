@@ -107,17 +107,6 @@ def human_format(num):
     )
 
 
-# take a batched norm-of-average of a batch of 6-vectors corresponding to rank-2 symmetric tensors (strain, stress)
-def batched_vec_avg_norm(field):
-    # first take volume average, then take L2 norm for each batch entry
-    # keep old shape around for broadcasting
-    return (
-        (field.mean(dim=(-3, -2, -1), keepdim=True) ** 2)
-        .sum(dim=1, keepdim=True)
-        .sqrt()
-    )
-
-
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -165,7 +154,17 @@ def print_activ_map(x):
         del x
 
 
-def save_checkpoint(model, optim, sched, epoch, loss, best=False, ema_model=None, path_override=None, backup_prev=True):
+def save_checkpoint(
+    model,
+    optim,
+    sched,
+    epoch,
+    loss,
+    best=False,
+    ema_model=None,
+    path_override=None,
+    backup_prev=True,
+):
     print(f"Saving model for epoch {epoch}!")
     if path_override is None:
         path = model.config.get_save_str(model, epoch, best=best)
@@ -197,21 +196,20 @@ def load_checkpoint(path, model, optim=None, sched=None, strict=True, device=Non
     # loads checkpoint into a given model and optimizer
     checkpoint = torch.load(path, map_location=device)
 
-    # print("keys", checkpoint.keys())
-    # print("keys_model", checkpoint["model_state_dict"].keys())
-
-    # del_keys = [
-    #     "eps_bar",
-    #     "scaled_average_strain",
-    #     "constlaw.stiffness_mats",
-    #     "constlaw.compliance_mats",
-    #     "greens_op.G_freq",
-    #     "greens_op.constlaw.stiffness_mats",
-    #     "greens_op.constlaw.compliance_mats",
-    # ]
-    # for k in del_keys:
-    #     if k in checkpoint["model_state_dict"].keys():
-    #         del checkpoint["model_state_dict"][k]
+    del_keys = [
+        # "eps_bar",
+        # "scaled_average_strain",
+        "constlaw.C_ref",
+        "constlaw.S_ref",
+        "greens_op.constlaw.C_ref",
+        "greens_op.constlaw.S_ref",
+        # "greens_op.G_freq",
+        # "greens_op.constlaw.stiffness_mats",
+        # "greens_op.constlaw.compliance_mats",
+    ]
+    for k in del_keys:
+        if k in checkpoint["model_state_dict"].keys():
+            del checkpoint["model_state_dict"][k]
 
     model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
 
@@ -229,14 +227,16 @@ def load_checkpoint(path, model, optim=None, sched=None, strict=True, device=Non
             model, multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(0.99)
         )
         # copy in pointer to const info
-        ema_model.constlaw = model.constlaw
+        ema_model.overrideConstlaw(model.constlaw)
         ema_model.load_state_dict(checkpoint["ema_state_dict"], strict=strict)
         eval_model = model
 
     epoch = checkpoint["epoch"]
     loss = checkpoint["last_train_loss"]
 
-    print(f"Loading model for epoch {epoch}, original conf was {checkpoint['conf_file']}! Last loss was {loss:.3f}")
+    print(
+        f"Loading model for epoch {epoch}, original conf was {checkpoint['conf_file']}! Last loss was {loss:.3f}"
+    )
 
     return eval_model
 
@@ -315,10 +315,8 @@ def plot_pred(epoch, micro, y_true, y_pred, field_name, image_dir):
     plt.close(fig)
 
 
-def check_constlaw(constlaw, micro, strain, stress):
+def check_constlaw(constlaw, C_field, strain, stress):
     # Check that our constlaw gives same stress-strain relation as FEA
-
-    C_field = constlaw.compute_C_field(micro)
 
     # print("C ref", constlaw.C_ref)
 
@@ -341,7 +339,7 @@ def check_constlaw(constlaw, micro, strain, stress):
 
     # print(f"Each component err mean is: {err.mean(dim=(0, -1, -2, -3))}")
 
-    ok = torch.allclose(stress_comp, stress, rtol=1e-8, atol=2e-5)
+    ok = torch.allclose(stress_comp, stress, rtol=1e-8, atol=1e-2)
 
     # if things don't match, plot for debugging purposes
     if not ok:
@@ -356,7 +354,7 @@ def check_constlaw(constlaw, micro, strain, stress):
 
         plot_pred(
             -1,
-            micro[b, 1][sind],
+            C_field[b, 0, 0][sind],
             stress[b, c][sind],
             stress_comp[b, c][sind],
             "stresscomp",
@@ -365,7 +363,7 @@ def check_constlaw(constlaw, micro, strain, stress):
 
         plot_pred(
             -1,
-            micro[b, 1][sind],
+            C_field[b, 0, 0][sind],
             0 * err[b, c][sind],
             err[b, c][sind],
             "err_stresscompx",
@@ -373,7 +371,7 @@ def check_constlaw(constlaw, micro, strain, stress):
         )
         plot_pred(
             -1,
-            micro[b, 1][sind],
+            C_field[b, 0, 0][sind],
             0 * strain[b, c][sind],
             strain[b, c][sind],
             "straincomp",

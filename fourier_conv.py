@@ -190,7 +190,7 @@ class SpectralConv3d_alt(torch.nn.Module):
         # get midpoints of new weights tensor
         m1, m2 = s1 // 2, s2 // 2
 
-        print(m1, m2, s1, s2)
+        # print(m1, m2, s1, s2)
 
         # input is biijk, output is boijk, elem-wise multiply along last
         # go from center - m to center + m (not including endpoints)

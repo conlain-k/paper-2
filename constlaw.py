@@ -11,7 +11,7 @@ from euler_ang import *
 def strain_to_stress(C_field, strain):
     """Apply a given constitutive law over a batch of stiffness tensors"""
 
-    stress = torch.einsum("brcxyz, bcxyz->brxyz", C_field, strain)
+    stress = torch.einsum("...rcxyz, ...cxyz->...rxyz", C_field, strain)
 
     return stress
 
@@ -22,28 +22,9 @@ class StrainToStress_base(torch.nn.Module):
         super().__init__()
 
         # store reference stiffness matrix (need to set values in child class)
-        self.register_buffer("C_ref", torch.zeros((6, 6)))#, persistent=False)
-        self.register_buffer("S_ref", torch.zeros((6, 6)))#, persistent=False)
-
-        self.stiffness_scaling = None
-        self.strain_scaling = None
-        self.stress_scaling = None
-        self.energy_scaling = None
-
-    def compute_scalings(self, eps_bar):
-        frob = lambda x: (x**2).sum().sqrt()
-        # print("Computing scalings!")
-        # print(self.C_ref)
-        self.stiffness_scaling = frob(self.C_ref)
-
-        # print(self.C_ref / self.stiffness_scaling)
-        # print(frob(self.C_ref / self.stiffness_scaling))
-
-        self.strain_scaling = frob(torch.as_tensor(eps_bar))
-
-        # compute other scalings downstream of this one
-        self.stress_scaling = self.stiffness_scaling * self.strain_scaling
-        self.energy_scaling = self.stress_scaling * self.strain_scaling
+        # don't cache these since we require valid constlaw at model initialization
+        self.register_buffer("C_ref", torch.zeros((6, 6)), persistent=False)
+        self.register_buffer("S_ref", torch.zeros((6, 6)), persistent=False)
 
     def compute_C_matrix(self, lamb, mu):
         new_mat = torch.zeros((6, 6), dtype=torch.float32, requires_grad=False)
@@ -60,16 +41,12 @@ class StrainToStress_base(torch.nn.Module):
 
         return new_mat
 
-    def stress_pol(self, strain, C_field, scaled=False):
+    def stress_pol(self, strain, C_field, ref_scaling=1.0):
         """
-        Compute stress polarization (pass scaled=True if strains and C are scaled)
+        Compute stress polarization (possibly rescaling the reference scaling)
         """
 
-        C_ref = self.C_ref
-        if scaled:
-            C_ref = C_ref / self.stiffness_scaling
-
-        C_pert = C_field - C_ref.reshape(1, 6, 6, 1, 1, 1)
+        C_pert = C_field - self.C_ref.reshape(1, 6, 6, 1, 1, 1) / ref_scaling
         # compute stress polarization
         stress_polarization = torch.einsum("brcxyz, bcxyz -> brxyz", C_pert, strain)
 
@@ -98,27 +75,14 @@ class StrainToStress_base(torch.nn.Module):
             scale = self.stiffness_scaling
         return weighted_norm(field, self.S_ref * scale, average)
 
-    def scale_strain(self, strain):
-        return strain / self.strain_scaling
-
-    def unscale_strain(self, strain):
-        return strain * self.strain_scaling
-
-    def scale_stress(self, stress):
-        return stress / self.stress_scaling
-
-    def unscale_stress(self, stress):
-        return stress * self.stress_scaling
-
-    def scale_stiffness(self, stiffness):
-        return stiffness / self.stiffness_scaling
-
-    def unscale_stiffness(self, stiffness):
-        return stiffness * self.stiffness_scaling
+    def compute_C_field(self, micros):
+        raise NotImplementedError(
+            "Error: you need to set a valid constlaw before evaluating the solver!"
+        )
 
 
 class StrainToStress_2phase(StrainToStress_base):
-    def __init__(self, E_vals, nu_vals, eps_bar_ref):
+    def __init__(self, E_vals, nu_vals):
         # computes stresses from strains and stiffness tensor (2 phase specialization)
         super().__init__()
         self.nphases = len(E_vals)
@@ -132,6 +96,8 @@ class StrainToStress_2phase(StrainToStress_base):
             "compliance_mats", torch.zeros((self.nphases, 6, 6)), persistent=False
         )
 
+        ev_min = 0
+        ev_max = float("inf")
 
         for j in range(self.nphases):
             # compute Lamé constants
@@ -142,26 +108,46 @@ class StrainToStress_2phase(StrainToStress_base):
                 self.lamb_vals[j], self.mu_vals[j]
             )
 
+            # get eigenvalues of each material's stiffness tensor
+            evs = torch.linalg.eigvals(self.stiffness_mats[j]).real
+
+            if torch.min(evs) < ev_min:
+                ev_min = torch.min(evs)
+
+            if torch.max(evs) < ev_max:
+                ev_max = torch.max(evs)
+
+            print(
+                self.lamb_vals[j],
+                self.mu_vals[j],
+                torch.linalg.eigvals(self.stiffness_mats[j]),
+            )
+
             # also cache compliance (inverse stiffness)
             self.compliance_mats[j] = torch.linalg.inv(self.stiffness_mats[j])
+
+        # print(torch.eigvals(Cmat) for Cmat in self.st)
 
         # store Lamé coefficients for simplicity
 
         self.lamb_0 = self.lamb_vals.mean()
         self.mu_0 = self.mu_vals.mean()
-        self.C_ref = isotropic_mandel66(self.lamb_0, self.mu_0)
-        self.S_ref = torch.linalg.inv(self.C_ref)
 
-        # now compute
-        self.compute_scalings(eps_bar_ref)
+        scaling = (ev_min + ev_max) / 2.0
+        # self.C_ref = identity_66() * scaling
+
+        self.C_ref = isotropic_mandel66(self.lamb_0, self.mu_0)
+
+        # print(self.C_ref)
+        self.S_ref = torch.linalg.inv(self.C_ref)
 
     def compute_C_field(self, micros):
         # compute stiffness tensor field from 2-phase microstructure
-        return torch.einsum("bhxyz, hrc -> brcxyz", micros, self.stiffness_mats)
+        return torch.einsum("...hxyz, hrc -> ...rcxyz", micros, self.stiffness_mats)
 
 
 class StrainToStress_crystal(StrainToStress_base):
-    def __init__(self, C11, C12, C44, eps_bar_ref):
+    def __init__(self, C11, C12, C44):
         # computes stresses from strains and stiffness tensor (cubic crystal)
         super().__init__()
 
@@ -183,9 +169,6 @@ class StrainToStress_crystal(StrainToStress_base):
         # use (nearest) isotropic reference
         self.C_ref = isotropic_mandel66(self.lamb_0, self.mu_0)
         self.S_ref = torch.linalg.inv(self.C_ref)
-
-        self.compute_scalings(eps_bar_ref)
-
 
     def compute_local_stiffness(self, euler_ang, stiff_mat_base):
         # assumes euler ange have shape (batch, 3, x, y, z)
@@ -410,7 +393,7 @@ def weighted_norm(field, weight_mat, average):
 
 def compute_quants(model, strain, C_field):
     # handy helper to compute multiple thermodynamic quantities at once
-    stress = model.constlaw(C_field, strain)
+    stress = strain_to_stress(C_field, strain)
     stress_polar = model.constlaw.stress_pol(strain, C_field)
     energy = compute_strain_energy(strain, stress)
 

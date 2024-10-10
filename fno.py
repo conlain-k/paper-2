@@ -82,6 +82,7 @@ class FNO(torch.nn.Module):
         # lift into latent space
         x = self.lift(x)
 
+        # apply filter
         x = self.middle(x)
 
         # now project onto strain field

@@ -43,16 +43,12 @@ def compute_error_metrics(model, C_field, strain_true, strain_pred):
             # volume-averaged L2 norm of a vector quantity
             return (x**2).sum(dim=1).mean(dim=(-3, -2, -1)).sqrt()
 
-        strain_L2_err = 100 * avg_L2_norm(
-            model.constlaw.scale_strain(strain_true - strain_pred)
-        )
-        stress_L2_err = 100 * avg_L2_norm(
-            model.constlaw.scale_stress(stress_true - stress_pred)
-        )
+        strain_L2_err = 100 * avg_L2_norm(model.scale_strain(strain_true - strain_pred))
+        stress_L2_err = 100 * avg_L2_norm(model.scale_stress(stress_true - stress_pred))
 
         # Compute running L1 errors
         # average out over space
-        L1_exx_err = model.constlaw.scale_strain(
+        L1_exx_err = model.scale_strain(
             mean_L1_error(strain_pred[:, 0], strain_true[:, 0])
         )
 
@@ -74,13 +70,11 @@ def compute_error_metrics(model, C_field, strain_true, strain_pred):
 
 
 def plot_example(epoch, model, loader, ind, add_str=None):
-    micro, bc_vals, strain_true, _ = loader.dataset[ind : ind + 1]
+    C_field, bc_vals, strain_true, _ = loader.dataset[ind : ind + 1]
 
-    micro = micro.to(model.inf_device)
+    C_field = C_field.to(model.inf_device)
     strain_true = strain_true.to(model.inf_device)
     bc_vals = bc_vals.to(model.inf_device)
-
-    C_field = model.constlaw.compute_C_field(micro)
 
     # evaluate model
     strain_pred = model(C_field, bc_vals)
@@ -89,8 +83,6 @@ def plot_example(epoch, model, loader, ind, add_str=None):
     if model.config.add_resid_loss:
         # also grab resid if it's an option
         strain_pred, last_iterate = strain_pred
-
-    C_field = model.constlaw.compute_C_field(micro)
 
     # recompute quantities
     stress_pred, stress_polar_pred, energy_pred = compute_quants(
@@ -101,12 +93,12 @@ def plot_example(epoch, model, loader, ind, add_str=None):
     )
 
     # mean_L1_strain_errs = (
-    #     model.constlaw.scale_strain(strain_pred - strain_true)
+    #     model.scale_strain(strain_pred - strain_true)
     #     .abs()
     #     .mean(dim=(-3, -2, -1))
     # )
     # mean_L1_stress_errs = (
-    #     model.constlaw.scale_stress(stress_pred - stress_true)
+    #     model.scale_stress(stress_pred - stress_true)
     #     .abs()
     #     .mean(dim=(-3, -2, -1))
     # )
@@ -148,9 +140,11 @@ def plot_example(epoch, model, loader, ind, add_str=None):
     # Plot z=const slice
     sind = s_[:, :, ind_max[-1]]
 
+    micro_slice = C_field[0, 0, 0][sind]
+
     plot_pred(
         epoch,
-        micro[0, 0][sind],
+        micro_slice,
         strain_true[0, FIELD_IND][sind],
         strain_pred[0, FIELD_IND][sind],
         "strain",
@@ -159,7 +153,7 @@ def plot_example(epoch, model, loader, ind, add_str=None):
 
     plot_pred(
         epoch,
-        micro[0, 0][sind],
+        micro_slice,
         stress_true[0, FIELD_IND][sind],
         stress_pred[0, FIELD_IND][sind],
         "stress",
@@ -167,7 +161,7 @@ def plot_example(epoch, model, loader, ind, add_str=None):
     )
     plot_pred(
         epoch,
-        micro[0, 0][sind],
+        micro_slice,
         VM_stress_true[0, FIELD_IND][sind],
         VM_stress_pred[0, FIELD_IND][sind],
         "VM_stress",
@@ -192,7 +186,7 @@ def plot_example(epoch, model, loader, ind, add_str=None):
 
         plot_pred(
             epoch,
-            micro[0, 0][sind],
+            micro_slice,
             compat_err_true[0, 0][sind],
             compat_err_pred[0, 0][sind],
             "compat_err",
@@ -201,7 +195,7 @@ def plot_example(epoch, model, loader, ind, add_str=None):
 
         plot_pred(
             epoch,
-            micro[0, 0][sind],
+            micro_slice,
             equib_err_true[0, 0][sind],
             equib_err_pred[0, 0][sind],
             "equib_err",
@@ -210,7 +204,7 @@ def plot_example(epoch, model, loader, ind, add_str=None):
 
     plot_pred(
         epoch,
-        micro[0, 0][sind],
+        micro_slice,
         stressdiv_true[0, 0][sind],
         stressdiv_pred[0, 0][sind],
         "stressdiv",
@@ -219,7 +213,7 @@ def plot_example(epoch, model, loader, ind, add_str=None):
 
     plot_pred(
         epoch,
-        micro[0, 0][sind],
+        micro_slice,
         energy_true[0, 0][sind],
         energy_pred[0, 0][sind],
         "energy",
@@ -228,7 +222,7 @@ def plot_example(epoch, model, loader, ind, add_str=None):
 
     plot_pred(
         epoch,
-        micro[0, 0][sind],
+        micro_slice,
         0 * energy_err[sind],
         energy_err[sind],
         "energy_err",
@@ -242,7 +236,7 @@ def plot_example(epoch, model, loader, ind, add_str=None):
         h_out_last = model.F(h_in_last, input_encoded)
         plot_pred(
             epoch,
-            micro[0, 0][sind],
+            micro_slice,
             h_in_last[0, FIELD_IND][sind],
             h_out_last[0, FIELD_IND][sind],
             "last_iterate",
@@ -250,13 +244,13 @@ def plot_example(epoch, model, loader, ind, add_str=None):
         )
 
         if model.config.penalize_teacher_resid:
-            h_in_teacher = model.constlaw.scale_strain(strain_true)
+            h_in_teacher = model.scale_strain(strain_true)
 
             h_out_teacher = model.F(h_in_teacher, input_encoded)
 
             plot_pred(
                 epoch,
-                micro[0, 0][sind],
+                micro_slice,
                 h_in_teacher[0, FIELD_IND][sind],
                 h_out_teacher[0, FIELD_IND][sind],
                 "teacher_resid",
@@ -265,7 +259,7 @@ def plot_example(epoch, model, loader, ind, add_str=None):
 
             plot_pred(
                 epoch,
-                micro[0, 0][sind],
+                micro_slice,
                 h_out_last[0, FIELD_IND][sind],
                 h_out_teacher[0, FIELD_IND][sind],
                 "image_teacher_resid",
@@ -294,7 +288,7 @@ def compute_losses(
         h_in_last = last_iterate
 
         (
-            model.constlaw.scale_strain(strain_true)
+            model.scale_strain(strain_true)
             if model.config.penalize_teacher_resid
             else last_iterate
         )
@@ -304,12 +298,20 @@ def compute_losses(
         resid_loss = frob_norm_2(h_out_last - h_in_last)
 
         if model.config.penalize_teacher_resid:
-            h_in_teacher = model.constlaw.scale_strain(strain_true)
+            h_in_teacher = model.scale_strain(strain_true)
             h_out_teacher = model.F(h_in_teacher.detach(), input_encoded)
             resid_loss = resid_loss + frob_norm_2(h_in_teacher - h_out_teacher)
 
-    strain_err = model.constlaw.scale_strain(strain_true - strain_pred)
-    stress_err = strain_to_stress(model.constlaw.scale_stiffness(C_field), strain_err)
+    # print(f"{strain_true.mean((0,-3,-2,-1))}")
+    # print(f"{strain_pred.mean((0,-3,-2,-1))}")
+
+    # print(f"{stress_true.mean((0,-3,-2,-1))}")
+    # print(f"{stress_pred.mean((0,-3,-2,-1))}")
+
+    # print(bc_vals[:10])
+
+    strain_err = model.scale_strain(strain_true - strain_pred)
+    stress_err = strain_to_stress(model.scale_stiffness(C_field), strain_err)
     strain_loss = frob_norm_2(strain_err)
     stress_loss = frob_norm_2(stress_err)
 
@@ -325,7 +327,7 @@ def compute_losses(
     resid_loss = resid_loss.mean()
 
     print(
-        f"strain: {strain_loss},stress: {stress_loss},energy: {energy_loss},resid: {resid_loss}"
+        f"strain: {strain_loss:.4f}, stress: {stress_loss:.4f}, energy: {energy_loss:.4f},resid: {resid_loss}"
     )
 
     # if model.config.balance_losses:
@@ -370,15 +372,22 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
     plot_example(epoch, model, eval_loader, PLOT_IND_WORST_STRAIN, "/hard/")
     plot_example(epoch, model, eval_loader, PLOT_IND_GENERIC, "/easy/")
     running_time_cost = 0
-    for batch_ind, (micros, bc_vals, strain_true, stress_true) in enumerate(
+    for batch_ind, (C_field, bc_vals, strain_true, stress_true) in enumerate(
         eval_loader
     ):
         if data_mode == DataMode.TEST:
             print(f"Testing batch {batch_ind} of {len(eval_loader)}")
 
+        C_field = C_field.to(model.inf_device)
+
         # check that constlaw is accurate (helps pick off errors in conversion, etc.)
         if (batch_ind == 0) and (epoch == 0) and CHECK_CONSTLAW:
-            check_constlaw(model.to(model.inf_device).constlaw, micros.to(model.inf_device), strain_true.to(model.inf_device), stress_true.to(model.inf_device))
+            check_constlaw(
+                model.to(model.inf_device).constlaw,
+                C_field,
+                strain_true.to(model.inf_device),
+                stress_true.to(model.inf_device),
+            )
 
         # force synchronization for timing
         sync()
@@ -387,7 +396,6 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
         # include data migration in timing
         # micros = micros.to(model.inf_device)
         bc_vals = bc_vals.to(model.inf_device)
-        C_field = model.constlaw.compute_C_field(micros.to(model.inf_device))
 
         # now evaluate model
         strain_pred = eval_model(C_field, bc_vals)
@@ -535,10 +543,10 @@ def train_model(model, config, train_loader, valid_loader):
 
     print(
         "Scalings",
-        model.constlaw.strain_scaling,
-        model.constlaw.stiffness_scaling,
-        model.constlaw.stress_scaling,
-        model.constlaw.energy_scaling,
+        model.strain_scaling,
+        model.stiffness_scaling,
+        model.stress_scaling,
+        model.energy_scaling,
     )
 
     for e in range(config.num_epochs):
@@ -571,17 +579,22 @@ def train_model(model, config, train_loader, valid_loader):
         # zero out gradients
         optimizer.zero_grad()
 
-
-        for batch_ind, (micros, bc_vals, strain_true, batch_stress_true) in enumerate(
+        for batch_ind, (C_field, bc_vals, strain_true, batch_stress_true) in enumerate(
             train_loader
         ):
+            C_field = C_field.to(model.inf_device)
+
+            # C_field = model.constlaw.compute_C_field(micros)
+
             if (batch_ind == 0) and CHECK_CONSTLAW and (e == 0):
-                check_constlaw(model.to(model.inf_device).constlaw, micros.to(model.inf_device), strain_true.to(model.inf_device), batch_stress_true.to(model.inf_device))
+                check_constlaw(
+                    model.to(model.inf_device).constlaw,
+                    C_field,
+                    strain_true.to(model.inf_device),
+                    batch_stress_true.to(model.inf_device),
+                )
 
-
-            micros = micros.to(model.inf_device)
             bc_vals = bc_vals.to(model.inf_device)
-            C_field = model.constlaw.compute_C_field(micros)
 
             # apply model forward pass
             strain_pred = model(C_field, bc_vals)

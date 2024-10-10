@@ -1,4 +1,5 @@
 import os
+
 # os.environ["WANDB_SILENT"] = "true"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "backend:cudaMallocAsync"
 
@@ -49,7 +50,6 @@ CR_str = "100.0"
 m_base = "paper2_smooth"
 r_base = None
 USING_ABAQUS_DATASET = True
-USING_ABAQUS_DATASET = True
 UPSAMP_MICRO_FAC = None
 
 m_base = "paper2_16"
@@ -58,14 +58,20 @@ USING_ABAQUS_DATASET = False
 
 UPSAMP_MICRO_FAC = 2
 
+
 # m_base = "paper2_16"
 # r_base = "paper2_16_u1_responses"
 # UPSAMP_MICRO_FAC = 1
 
-# m_base = "paper2_32"
-# r_base = "paper2_32_u1_responses"
-# UPSAMP_MICRO_FAC = 1
+m_base = "paper2_32"
+r_base = "paper2_32_u1_responses"
+UPSAMP_MICRO_FAC = 1
+FIXED_CR = True
 
+m_base = "paper2_32_randcr"
+r_base = "paper2_32_randcr_u1_responses"
+UPSAMP_MICRO_FAC = 1
+FIXED_CR = False
 
 datasets, CR = collect_datasets(m_base, CR_str, r_base=r_base)
 
@@ -78,7 +84,7 @@ DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 
 # load train and validation sets from given file base
-def load_data(config, mode):
+def load_data(config, mode, constlaw=None):
     global ref_val
     print(f"Currently loading files {datasets[mode]} for mode {mode}")
 
@@ -87,6 +93,8 @@ def load_data(config, mode):
         upsamp_micro_fac=UPSAMP_MICRO_FAC,
         swap_abaqus=USING_ABAQUS_DATASET,
     )
+
+    dataset.attach_constlaw(constlaw)
 
     # dump into dataloader
     loader = DataLoader(dataset, pin_memory=True, **config.loader_args[mode])
@@ -110,9 +118,15 @@ if __name__ == "__main__":
     if args.init_weight_scale:
         config.fno_args["init_weight_scale"] = args.init_weight_scale
 
+    constlaw = constlaw.StrainToStress_2phase(E_VALS, NU_VALS)
+
     # get train and validation datasets
-    train_loader = load_data(config, DataMode.TRAIN)
-    valid_loader = load_data(config, DataMode.VALID)
+    train_loader = load_data(
+        config, DataMode.TRAIN, constlaw=constlaw if FIXED_CR else None
+    )
+    valid_loader = load_data(
+        config, DataMode.VALID, constlaw=constlaw if FIXED_CR else None
+    )
 
     # NOTE assumes that second-to-last strain dimension is a spatial one
     num_voxels = train_loader.dataset[0][0].shape[-2]
@@ -122,12 +136,9 @@ if __name__ == "__main__":
     # cache training data name for future reference
     config.train_dataset_name = datasets[DataMode.TRAIN]
 
-    model = make_localizer(config)
-
-    constlaw=constlaw.StrainToStress_2phase(E_VALS, NU_VALS, E_BAR)
-
-    # now we can set constitutive parameters
-    model.setConstlaw(constlaw)
+    model = make_localizer(config, constlaw)
+    # set scalings using reference stiffness and constlaw
+    model.compute_scalings(E_BAR)
 
     model = model.to(DEVICE)
     model.inf_device = DEVICE

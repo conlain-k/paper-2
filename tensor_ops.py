@@ -122,6 +122,14 @@ def YMP_to_Lame(E, nu):
     return lamb, mu
 
 
+def identity_66():
+    return torch.eye(6, 6)
+
+
+def identity_3333():
+    return C_mandel_to_mat_3x3x3x3(identity_66())
+
+
 def isotropic_mandel66(lamb, mu):
     # extract coefficients and use the fact that isotropic is a subset of cubic
     return cubic_mandel66(2 * mu + lamb, lamb, mu)
@@ -153,6 +161,8 @@ def batched_rotate(euler_ang, stiff_mat_base, passive=True):
 
     # get vector of rotation mats
     R = euler_angles_to_matrix(euler_ang, "ZXZ")
+
+    
 
     # if passive:
     # flip 1st and 2nd indices (convert passive -> active) to match MOOSE

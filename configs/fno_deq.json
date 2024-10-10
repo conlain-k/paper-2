@@ -11,8 +11,8 @@
     "deq_args": {
         "f_solver": "anderson",
         "b_solver": "anderson",
-        "f_max_iter": 8,
-        "b_max_iter": 8,
+        "f_max_iter": 12,
+        "b_max_iter": 12,
         "f_tol": 1e-5,
         "b_tol": 1e-5,
         "use_ift": true

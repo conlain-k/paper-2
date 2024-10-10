@@ -3,8 +3,7 @@
     "model_type": "ThermINOLocalizer",
     "_parent": "configs/thermino.json",
     "hybrid_args": {
-        "use_fft_pre_iter": true,
+        "use_fft_pre_iter": false,
         "use_fft_post_iter": false,
-        "add_fft_encoding": false
-    }
+        "add_fft_encoding": true    }
 }

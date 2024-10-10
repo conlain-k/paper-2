@@ -30,7 +30,7 @@ class Config:
     arch_str: str = ""
     model_type: str = None
 
-    num_epochs: int = 100
+    num_epochs: int = 200
     lr_max: float = 1e-3
 
     # whether to override lambdas and balance loss terms manually
@@ -41,7 +41,7 @@ class Config:
     # input features (at least one of these must be set to true!)
     use_micro: bool = False
     use_C_flat: bool = False
-    use_bc_strain: bool = False
+    use_bc_strain: bool = True
 
     # default to global values, but allow overwrite
     lam_strain: float = lam_strain
@@ -63,9 +63,9 @@ class Config:
     # args for dataloader
     loader_args: dict = field(
         default_factory=lambda: {
-            DataMode.TRAIN: {"batch_size": 16, "shuffle": True, "num_workers": 1},
-            DataMode.VALID: {"batch_size": 128, "shuffle": False, "num_workers": 1},
-            DataMode.TEST: {"batch_size": 128, "shuffle": False, "num_workers": 1},
+            DataMode.TRAIN: {"batch_size": 16, "shuffle": True, "num_workers": 2},
+            DataMode.VALID: {"batch_size": 128, "shuffle": False, "num_workers": 2},
+            DataMode.TEST: {"batch_size": 128, "shuffle": False, "num_workers": 2},
         }
     )
 

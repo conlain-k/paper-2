@@ -19,6 +19,7 @@ sbatch run_train.sh -c configs/thermino_notherm.json
 
 sbatch run_train.sh -c configs/thermino_pre.json 
 sbatch run_train.sh -c configs/thermino_post.json 
+sbatch run_train.sh -c configs/thermino_hybrid.json 
 
 # sbatch run_train.sh -c configs/ff.json 
 # sbatch run_train.sh -c configs/ff.json -E
