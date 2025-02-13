@@ -91,9 +91,11 @@ def C_mandel_to_mat_3x3x3x3(mat_66):
         mat_66 = mat_66.reshape(1, 6, 6)
 
     # requires mat to have shape (batch, 6,6, ...), where the last bit can be anything
-    new_shape = mat_66.shape[0:1] + (3, 3, 3, 3) + mat_66.shape[5:]
+    new_shape = mat_66.shape[0:1] + (3, 3, 3, 3) + mat_66.shape[3:]
 
     C = mat_66.new_zeros(new_shape)
+
+    print(C.shape)
 
     # loop over target indices
     for m, n, o, p in itertools.product(torch.arange(3), repeat=4):
@@ -161,8 +163,6 @@ def batched_rotate(euler_ang, stiff_mat_base, passive=True):
 
     # get vector of rotation mats
     R = euler_angles_to_matrix(euler_ang, "ZXZ")
-
-    
 
     # if passive:
     # flip 1st and 2nd indices (convert passive -> active) to match MOOSE

@@ -1,0 +1,7 @@
+{
+    "_description": "Therino solver w/ teach forcing",
+    "model_type": "TherINOLocalizer",
+    "_parent": "configs/therino.json",
+    "add_resid_loss": true,
+    "penalize_teacher_resid": true
+}

@@ -9,13 +9,15 @@ import math
 from tensor_ops import *
 from helpers import upsample_field
 from constlaw import *
+from copy import deepcopy
 
-# increase cache to 1GB
-H5_CACHE_SIZE = 4 * 1024 * 1024 * 1024
+# increase cache to 16GB
+H5_CACHE_SIZE = 16 * 1024 * 1024 * 1024
 
+SQRT2 = math.sqrt(2.0)
 
-FAC_STRESS = math.sqrt(2.0)
-FAC_STRAIN = math.sqrt(2.0)
+FAC_STRESS = SQRT2
+FAC_STRAIN = SQRT2
 
 E_BAR_DEFAULT = torch.as_tensor([0.001, 0, 0, 0, 0, 0])
 
@@ -23,9 +25,11 @@ E_VALS_DEFAULT = [120.0, 100 * 120.0]
 NU_VALS_DEFAULT = [0.3, 0.3]
 
 
+mandel_scaling_vec = torch.as_tensor([1, 1, 1, SQRT2, SQRT2, SQRT2])
+
+
 def to_mandel(vec_ab, fac=1.0, swap_abaqus=False):
     # return vec_ab
-    # print(vec_ab.shape, vec_ab[:, 0].shape)
     vec_mand = vec_ab.new_zeros(vec_ab.shape)
     vec_mand[..., 0, :, :, :] = vec_ab[..., 0, :, :, :]  # 11
     vec_mand[..., 1, :, :, :] = vec_ab[..., 1, :, :, :]  # 22
@@ -53,6 +57,7 @@ class LocalizationDataset(Dataset):
         upsamp_micro_fac=None,
         swap_abaqus=False,
         device=None,
+        is_poly=False,
     ):
         # store files
         self.mf = micro_file
@@ -65,7 +70,9 @@ class LocalizationDataset(Dataset):
         self.strain = None
         self.stress = None
 
-        self.length = self.getdata(self.mf, dataset_name="micros").shape[0]
+        self.is_poly = is_poly
+
+        self.length = self.getData(self.rf, dataset_name="strain").shape[0]
 
         self.constlaw = None
 
@@ -87,11 +94,14 @@ class LocalizationDataset(Dataset):
             # abaqus uses engineering shear strain, moose does not
             self.fac_strain = math.sqrt(2.0) / 2.0
 
-    def attach_constlaw(self, constlaw):
+    def assignConstlaw(self, constlaw):
         # allows preprocessing using constlaw to convert micro -> stiffness
-        self.constlaw = constlaw
 
-    def getdata(self, filename, dataset_name=None, opt=None):
+        if constlaw is not None:
+            # make a deep copy to keep it on CPU
+            self.constlaw = deepcopy(constlaw).cpu()
+
+    def getData(self, filename, dataset_name=None, opt=None):
         """Actually load data from h5 or numpy file"""
         _, ext = os.path.splitext(filename)
 
@@ -100,14 +110,13 @@ class LocalizationDataset(Dataset):
             f = h5py.File(filename, "r", rdcc_nbytes=H5_CACHE_SIZE)
             dataset = f.get(dataset_name)
 
-            # # make sure everything is ok
-            # if dataset is not None
+            # return even if it's None
             return dataset
         elif ext.lower() in [".npy"]:
             f = np.load(filename)
             return f
         else:
-            raise NotImplementedError
+            raise NotImplementedError("Can only load h5 or npy files!constlaw")
 
     def __len__(self):
         """Return the total number of samples"""
@@ -120,57 +129,79 @@ class LocalizationDataset(Dataset):
 
         # lazy-load these files to work with multiprocessing
         if self.micro is None:
-            self.micro = self.getdata(self.mf, dataset_name="micros")
+            if self.is_poly:
+                ds_name = "EulerAngles"
+            else:
+                ds_name = "micros"
+            self.micro = self.getData(self.mf, dataset_name=ds_name)
+
         if self.strain is None:
-            self.strain = self.getdata(self.rf, dataset_name="strain")
+            self.strain = self.getData(self.rf, dataset_name="strain")
         if self.stress is None:
-            self.stress = self.getdata(self.rf, dataset_name="stress")
+            self.stress = self.getData(self.rf, dataset_name="stress")
 
         # try to get phase info and BCs
         if self.C_mats is None and self.try_phase_info:
             self.try_phase_info = False
-            phase_info = self.getdata(self.mf, dataset_name="phase_info")
+            phase_info = self.getData(self.mf, dataset_name="phase_info")
+            if phase_info is None:
+                # also try responses file in case that has info
+                phase_info = self.getData(self.rf, dataset_name="phase_info")
+
             # if we got any phase info, do some postprocessing now
             if phase_info is not None:
-                # now phase info is a dataset of size (n_instances, 2, 2)
-                # get unique contrast ratios
-                unique_vals = np.unique(phase_info, axis=0)
 
-                # how many different contrast ratios do we have?
-                num_unique = len(unique_vals)
+                if self.is_poly:
+                    # unzip and construct stiffness mat
+                    # assume same for all for now
+                    # TODO fix that!!!!
+                    C11, C12, C44 = phase_info[0]
+                    # just fall back to crystal constlaw
+                    self.constlaw = StrainToStress_crystal(C11, C12, C44)
+                else:
+                    # now phase info is a dataset of size (n_instances, 2, 2)
+                    # get unique contrast ratios
+                    unique_vals = np.unique(phase_info, axis=0)
 
-                # map contrast ratios to index in big tensor we're going to build
-                cr_to_ind = {}
+                    # how many different contrast ratios do we have?
+                    num_unique = len(unique_vals)
 
-                # list of sets of stiffness tensors
-                self.C_mats = torch.zeros(num_unique, 2, 6, 6).float()
+                    # map contrast ratios to index in big tensor we're going to build
+                    cr_to_ind = {}
 
-                for ind, v in enumerate(unique_vals):
-                    # first dump into tuple so it can act as dict key
-                    vals = tuple(v.flatten())
+                    # list of sets of stiffness tensors
+                    self.C_mats = torch.zeros(num_unique, 2, 6, 6).float()
 
-                    cr_to_ind[vals] = ind
+                    for ind, v in enumerate(unique_vals):
+                        # first dump into tuple so it can act as dict key
+                        vals = tuple(v.flatten())
 
-                    # now build stiffness mat
-                    # do 2-phase case for now
-                    # separate out physical params
-                    E_0, nu_0, E_1, nu_1 = vals
+                        cr_to_ind[vals] = ind
 
-                    # store these stiffness matrices at correct index
-                    self.C_mats[ind][0] = isotropic_mandel66(*YMP_to_Lame(E_0, nu_0))
-                    self.C_mats[ind][1] = isotropic_mandel66(*YMP_to_Lame(E_1, nu_1))
+                        # now build stiffness mat
+                        # do 2-phase case for now
+                        # separate out physical params
+                        E_0, nu_0, E_1, nu_1 = vals
 
-                # build lookup table mapping each instance index to a stiffness tensor
-                self.C_mat_inds = torch.as_tensor(
-                    [cr_to_ind[tuple(cr.flatten())] for cr in phase_info]
-                )
+                        # store these stiffness matrices at correct index
+                        self.C_mats[ind][0] = isotropic_mandel66(
+                            *YMP_to_Lame(E_0, nu_0)
+                        )
+                        self.C_mats[ind][1] = isotropic_mandel66(
+                            *YMP_to_Lame(E_1, nu_1)
+                        )
+
+                    # build lookup table mapping each instance index to a stiffness tensor
+                    self.C_mat_inds = torch.as_tensor(
+                        [cr_to_ind[tuple(cr.flatten())] for cr in phase_info]
+                    )
 
                 # if self.device is not None:
                 #     self.C_mats
 
         if self.bc_vals is None and self.try_bc_vals:
             self.try_bc_vals = False
-            self.bc_vals = self.getdata(self.mf, dataset_name="bc_vals")
+            self.bc_vals = self.getData(self.rf, dataset_name="bc_vals")
 
         # if self.metadata_dict['phase_info'] is not None:
         # if self.meta
@@ -181,7 +212,8 @@ class LocalizationDataset(Dataset):
         # if we have constlaw, convert directly to stiffness
         if self.constlaw is not None:
             # if we have a constlaw, use it
-            micro = self.constlaw.compute_C_field(micro)
+            C_field = self.constlaw.compute_C_field(micro)
+
         elif self.C_mats is not None:
             # get indices of each instance into tensor of phase_to_C mats
             phase_C_inds = self.C_mat_inds[index]
@@ -189,10 +221,8 @@ class LocalizationDataset(Dataset):
             # now get phase-to-C map for each instance
             phase_C = self.C_mats[phase_C_inds]
 
-            # print(phase_C.shape, micro.shape)
-
             # now contract phase dim with C dim to get local C fields
-            micro = torch.einsum("...hxyz, ...hrc -> ...rcxyz", micro, phase_C)
+            C_field = torch.einsum("...hxyz, ...hrc -> ...rcxyz", micro, phase_C)
         else:
             # just return raw micros if we can't do anything else
             raise NotImplementedError()
@@ -204,33 +234,18 @@ class LocalizationDataset(Dataset):
         stress = torch.from_numpy(self.stress[index]).float()
         stress = to_mandel(stress, fac=self.fac_stress, swap_abaqus=self.swap_abaqus)
 
-        # print(micro.shape, strain.shape)
         # upsample microstructures to match strain shapes
         if self.upsamp_micro_fac is not None:
-            micro = upsample_field(micro, self.upsamp_micro_fac)
+            C_field = upsample_field(C_field, self.upsamp_micro_fac)
 
-        # print(micro.shape, strain.shape)
         # make sure spatial dims match
-        # print(micro.shape, strain.shape)
-        # assert micro.shape[-3:] == strain.shape[-3:]
-
-        # expand along batch size (if one exists)
-        # bc_vals = strain.new_ones(
-        #     strain.shape[-5:-3] + (1, 1, 1)
-        # )
 
         if self.bc_vals is not None:
-            bc_vals = torch.from_numpy(self.bc_vals[index]).float()
+            bc_vals = torch.from_numpy(self.bc_vals[index]).float() * mandel_scaling_vec
         else:
             bc_vals = E_BAR_DEFAULT.expand(strain.shape[-5:-3])
 
         # either way fix shape
         bc_vals = bc_vals.reshape(strain.shape[-5:-3] + (1, 1, 1))
 
-        # print("strain", strain.shape)
-        # print("bc", bc_vals.shape)
-        # print("bcv", bc_vals.mean((-3, -2, -1)))
-        # print("strain_mean", strain.mean((-3, -2, -1)))
-        # print("stress_mean", stress.mean((-3, -2, -1)))
-
-        return micro, bc_vals, strain, stress
+        return C_field, bc_vals, strain, stress

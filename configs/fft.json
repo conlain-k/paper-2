@@ -1,0 +1,4 @@
+{
+    "_description": "DEQ FNO solver",
+    "model_type": "LocalizerFFT"
+}

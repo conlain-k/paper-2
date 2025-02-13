@@ -1,7 +1,7 @@
 {
-    "_description": "Thermino solver w/ fft pre-iter",
-    "model_type": "ThermINOLocalizer",
-    "_parent": "configs/thermino.json",
+    "_description": "Therino solver w/ fft pre-iter",
+    "model_type": "TherINOLocalizer",
+    "_parent": "configs/therino.json",
     "hybrid_args": {
         "use_fft_pre_iter": true,
         "use_fft_post_iter": false,

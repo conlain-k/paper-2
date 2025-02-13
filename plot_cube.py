@@ -10,36 +10,47 @@ def plot_cube(
     azim=-40,
     ortho=True,
     edges=True,
-    coord=True,
+    coord=False,
     title=None,
     add_cb=True,
     cmap="turbo",
     vmin=None,
     vmax=None,
-    edges_kw=dict(color="0.3", linewidth=1, linestyle="--", zorder=10),
+    edges_kw=dict(color="0.3", linewidth=0.5, linestyle="--", zorder=10),
 ):
 
-    # im = torch.fft.fftshift(im)
-
     if isinstance(im, torch.Tensor):
-        im = im.detach().numpy()
+        im = im.detach().cpu().numpy().squeeze()
+
+    im = im.real.squeeze()
 
     im = np.flip(np.rot90(np.rot90(im, k=1, axes=(0, 1)), k=-1, axes=(1, 2)), axis=1)
 
     # im = np.moveaxis(im, 0, -1)
 
-    # allow overrides of min and max
-    vmin = vmin or im.min()
-    vmax = vmax or im.max()
+    if cmap is not None:
+        min_vals = [im[0, :, :].min(), im[:, 0, :].min(), im[:, :, 0].min()]
+        max_vals = [im[0, :, :].max(), im[:, 0, :].max(), im[:, :, 0].max()]
 
-    norm = plt.Normalize(vmin=vmin, vmax=vmax)
-    cmap = plt.get_cmap(cmap)
-    colors = cmap(norm(im))
+        # allow overrides of min and max
+        vmin = vmin or min(min_vals)
+        vmax = vmax or max(max_vals)
+
+        norm = plt.Normalize(vmin=vmin, vmax=vmax)
+        cmap = plt.get_cmap(cmap)
+        colors = cmap(norm(im))
+
+    else:
+        # already color-mapped
+        colors = im
+
+    print(colors.shape)
 
     Cx = colors[0, :, :]
     Cy = colors[:, 0, :]
     Cz = colors[:, :, 0]
 
+    print(Cx.shape, Cy.shape, Cz.shape)
     # back faces
     Cx_b = colors[-1, :, :]
     Cy_b = colors[:, -1, :]
@@ -51,18 +62,16 @@ def plot_cube(
         Cz =  1 * Cz
         """
 
-    xp, yp, _ = Cx.shape
+    xp, yp, _ = Cx.shape[:3]
     x = np.arange(0, xp, 1 - 1e-13)
     y = np.arange(0, yp, 1 - 1e-13)
     Y, X = np.meshgrid(y, x)
 
-    fig = plt.figure(figsize=(12, 9))
+    fig = plt.figure(figsize=(4, 3.5))
     ax = fig.add_subplot(111, projection="3d")
     ax.dist = 6.2
     ax.view_init(elev=elev, azim=azim)
     ax.axis("off")
-
-    print(Cx.shape, X.shape)
 
     # plot one plane
     def plot_plane(xx, yy, zz, col):
@@ -158,13 +167,13 @@ def plot_cube(
     if add_cb:
         m = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
         m.set_array([])
-        fig.colorbar(m, ax=ax)
+        fig.colorbar(m, ax=ax, shrink=0.7)
 
     # now set title
     fig.tight_layout()
 
     if savedir is not None:
-        plt.savefig(savedir, transparent=True, dpi=300, facecolor="white")
+        plt.savefig(savedir, transparent=True, dpi=600, facecolor="white")
         plt.close()
 
     else:

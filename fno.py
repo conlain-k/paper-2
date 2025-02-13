@@ -120,12 +120,10 @@ class FNO_Block(torch.nn.Module):
         num_modes,
         normalize,
         init_weight_scale,
-        resid_conn,
         **kwargs,
     ):
         super().__init__()
 
-        self.resid_conn = resid_conn
         self.normalize = normalize
 
         # spectral convolution
@@ -149,13 +147,10 @@ class FNO_Block(torch.nn.Module):
         self.activ = get_activ(activ_type, latent_channels)
 
         if normalize:
-            self.norm = torch.nn.GroupNorm(1, latent_channels)
+            self.norm = torch.nn.GroupNorm(num_groups=1, num_channels=latent_channels)
 
     # just the middle bit of an FNO
     def forward(self, x, input_inj=None):
-        # residual outside normalization
-        if self.resid_conn:
-            x0 = x
 
         # normalize inputs for stability
         x = self.norm(x) if self.normalize else x
@@ -169,9 +164,5 @@ class FNO_Block(torch.nn.Module):
             x = x + input_inj
 
         x = self.activ(x)
-
-        if self.resid_conn:
-            # residual connection
-            x = x + x0
 
         return x

@@ -117,11 +117,11 @@ class StrainToStress_2phase(StrainToStress_base):
             if torch.max(evs) < ev_max:
                 ev_max = torch.max(evs)
 
-            print(
-                self.lamb_vals[j],
-                self.mu_vals[j],
-                torch.linalg.eigvals(self.stiffness_mats[j]),
-            )
+            # print(
+            #     self.lamb_vals[j],
+            #     self.mu_vals[j],
+            #     torch.linalg.eigvals(self.stiffness_mats[j]),
+            # )
 
             # also cache compliance (inverse stiffness)
             self.compliance_mats[j] = torch.linalg.inv(self.stiffness_mats[j])
@@ -171,8 +171,10 @@ class StrainToStress_crystal(StrainToStress_base):
         self.S_ref = torch.linalg.inv(self.C_ref)
 
     def compute_local_stiffness(self, euler_ang, stiff_mat_base):
-        # assumes euler ange have shape (batch, 3, x, y, z)
-
+        fix_shape = len(euler_ang.shape) == 4
+        # assumes euler angles have shape (batch, 3, x, y, z)
+        if fix_shape:
+            euler_ang = euler_ang.unsqueeze(0)
         orig_shape = euler_ang.shape
 
         # assumes batch is first index, then space, then angle (dream3d order)
@@ -194,6 +196,10 @@ class StrainToStress_crystal(StrainToStress_base):
             r=6,
             c=6,
         )
+
+        if fix_shape:
+            # make sure output shape matches input
+            C_field = C_field.squeeze(0)
         # flatten euler angles first
         return C_field
 
@@ -201,31 +207,45 @@ class StrainToStress_crystal(StrainToStress_base):
         return self.compute_local_stiffness(micros, self.C_unrot_3333)
 
 
+def equivalent(field, fac=2.0 / 3.0):
+    # given strain or stress, compute equivalent strain
+
+    # first get deviatoric component
+    dev = deviatoric(mandel_to_mat_3x3(field))
+    # then get J2 invariant (squared 2 norm of deviator)
+    J2 = torch.einsum("bijxyz, bijxyz -> bxyz", dev, dev)
+    # assert (J2 >= 0).all()
+    # use weighting factor (2/3 for strain, 3/2 for stress)
+    return (fac * J2).sqrt()
+
+
 def VMStress(stress):
-    stress_dev_mat = stressdeviator(stress)
-
-    # sum out via double dot product
-    inner = torch.einsum("bijxyz, bijxyz -> bxyz", stress_dev_mat, stress_dev_mat)
-    # add back channel dim
-    inner = inner.unsqueeze(1)
-
-    vm_stress = ((3.0 / 2.0) * inner).sqrt()
-
+    # equivalent stress is VM stress
+    return equivalent(stress, fac=3.0 / 2.0)
     # sum over first two dimensions
-    return vm_stress
 
 
-def stressdeviator(stress):
-    stress_mat = mandel_to_mat_3x3(stress)
-    trace = stress_mat[:, 0, 0] + stress_mat[:, 1, 1] + stress_mat[:, 2, 2]
-    stress_dev_mat = stress_mat
+def deviatoric(field_mat, mandel_form=False):
+    # print(field_mat.shape)
+    # assumes input is in 3x3 form (not mandel notation)
+    if mandel_form:
+        field_mat = mandel_to_mat_3x3(field_mat)
+    else:
+        assert field_mat.shape[1:3] == (3, 3)
+    # take deviatoric component of a tensor field (subtract off 1/3 trace from each diagonal)
+    trace = field_mat[:, 0, 0] + field_mat[:, 1, 1] + field_mat[:, 2, 2]
+    field_dev_mat = field_mat
 
-    # subtract off mean stress from diagonal
-    stress_dev_mat[:, 0, 0] -= trace / 3
-    stress_dev_mat[:, 1, 1] -= trace / 3
-    stress_dev_mat[:, 2, 2] -= trace / 3
+    # subtract off mean field from diagonal
+    field_dev_mat[:, 0, 0] -= trace / 3.0
+    field_dev_mat[:, 1, 1] -= trace / 3.0
+    field_dev_mat[:, 2, 2] -= trace / 3.0
 
-    return stress_dev_mat
+    # now convert back to mandel notation
+    if mandel_form:
+        field_dev_mat = mat_3x3_to_mandel(field_dev_mat)
+
+    return field_dev_mat
 
 
 # given a batch of vector fields R^3 -> R^d, return the gradient for each batch and component
@@ -352,8 +372,9 @@ def compute_strain_from_displacment(disp, use_FFT_deriv=False):
 
 def compute_strain_energy(strain, stress):
     # first compute elementwise strain ED, then add back a "channel" dimension
-    U = torch.einsum("brxyz, brxyz -> bxyz", strain, stress)
-    U = U.unsqueeze(1)
+    U = torch.einsum("...brxyz, ...brxyz -> ...bxyz", strain, stress)
+    # add back in channel dimension
+    U = U.unsqueeze(-4)
     return U
 
 

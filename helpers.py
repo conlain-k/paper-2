@@ -1,8 +1,12 @@
-from numpy import s_, unravel_index
+import os
 
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "backend:cudaMallocAsync"
+# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
+
+
+from numpy import s_, unravel_index
 import torch
 import json
-import os
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import AxesGrid
@@ -47,10 +51,21 @@ def sync():
 def upsample_field(f, fac):
     # upsample z then x then y
     return (
-        f.repeat_interleave(fac, dim=-3)
-        .repeat_interleave(fac, dim=-2)
-        .repeat_interleave(fac, dim=-1)
+        f.repeat_interleave(fac, dim=-3, output_size=f.shape[-3] * fac)
+        .repeat_interleave(fac, dim=-2, output_size=f.shape[-2] * fac)
+        .repeat_interleave(fac, dim=-1, output_size=f.shape[-1] * fac)
     )
+
+
+# average field by combining neigh
+def average_field(f, fac):
+    if torch.is_complex(f):
+        fr = torch.nn.functional.avg_pool3d(f.real, kernel_size=fac, stride=fac)
+        fc = torch.nn.functional.avg_pool3d(f.imag, kernel_size=fac, stride=fac)
+        # torch is dumb about pooling complex numbers, so do it manually for real and imag components, then recombine
+        return fr + 1.0j * fc
+
+    return torch.nn.functional.avg_pool3d(f, kernel_size=fac, stride=fac)
 
 
 def write_dataset_to_h5(dataset, name, h5_file):
@@ -74,7 +89,7 @@ def write_dataset_to_h5(dataset, name, h5_file):
     )
 
 
-def collect_datasets(m_base, CR, r_base=None):
+def collect_datasets(m_base, CR=100, r_base=None):
     # get response file base
     if r_base is None:
         r_base = f"{m_base}_cr{CR}_bc0_responses"
@@ -165,11 +180,12 @@ def save_checkpoint(
     path_override=None,
     backup_prev=True,
 ):
-    print(f"Saving model for epoch {epoch}!")
     if path_override is None:
         path = model.config.get_save_str(model, epoch, best=best)
     else:
         path = path_override
+
+    print(f"Saving model for epoch {epoch} to path {path}!")
 
     if os.path.isfile(path) and backup_prev:
         # always save at least one backup
@@ -185,6 +201,7 @@ def save_checkpoint(
             "scheduler_state_dict": sched.state_dict() if sched is not None else {},
             "last_train_loss": loss,
             "conf_file": model.config._conf_file,
+            "model_config": model.config,
             # save ema model in addition (if one exists)
             "ema_state_dict": ema_model.state_dict() if ema_model is not None else {},
         },
@@ -192,9 +209,31 @@ def save_checkpoint(
     )
 
 
-def load_checkpoint(path, model, optim=None, sched=None, strict=True, device=None):
+def load_checkpoint(
+    path,
+    model=None,
+    optim=None,
+    sched=None,
+    strict=True,
+    device=None,
+    constlaw_override=None,
+):
     # loads checkpoint into a given model and optimizer
     checkpoint = torch.load(path, map_location=device)
+
+    config = checkpoint.get("model_config", None)
+
+    # print(config)
+    if model is None:
+        if config is not None:
+            # janky circular import, but here we are. Could solve by splitting out checkpoints to a different file
+            from solvers import make_localizer
+
+            model = make_localizer(config, constlaw_override)
+        else:
+            raise RuntimeError(
+                "Need to either have config saved in checkpoint or pass a config in!"
+            )
 
     del_keys = [
         # "eps_bar",
@@ -227,7 +266,7 @@ def load_checkpoint(path, model, optim=None, sched=None, strict=True, device=Non
             model, multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(0.99)
         )
         # copy in pointer to const info
-        ema_model.overrideConstlaw(model.constlaw)
+        ema_model.constlaw = model.constlaw
         ema_model.load_state_dict(checkpoint["ema_state_dict"], strict=strict)
         eval_model = model
 

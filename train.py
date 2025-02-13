@@ -124,14 +124,16 @@ def plot_example(epoch, model, loader, ind, add_str=None):
 
     energy = compute_strain_energy(strain_true, stress_true).mean()
 
-    # get worst L1 error
+    # get equivalent strains for comparison
+    equiv_strain_true = equivalent(strain_true)
+    equiv_strain_pred = equivalent(strain_pred)
+
+    # get worst L1 error in equivalent strains
     ind_max = (
-        torch.argmax((strain_true - strain_pred)[:, FIELD_IND].abs().max())
-        .detach()
-        .cpu()
+        torch.argmax((equiv_strain_true - equiv_strain_pred).abs().max()).detach().cpu()
     )
 
-    ind_max = unravel_index(ind_max, strain_true[:, FIELD_IND].detach().cpu().shape)
+    ind_max = unravel_index(ind_max, equiv_strain_true[:].detach().cpu().shape)
 
     print(
         f"Saving fig for epoch {epoch}, plotting micro {ind} near {ind_max}, VM L1 err is {VM_L1_err.item():4f}, energy is {energy:4f}"
@@ -145,25 +147,17 @@ def plot_example(epoch, model, loader, ind, add_str=None):
     plot_pred(
         epoch,
         micro_slice,
-        strain_true[0, FIELD_IND][sind],
-        strain_pred[0, FIELD_IND][sind],
-        "strain",
+        equiv_strain_true[0][sind],
+        equiv_strain_pred[0][sind],
+        "equiv_strain",
         model.config.image_dir + add_str,
     )
 
     plot_pred(
         epoch,
         micro_slice,
-        stress_true[0, FIELD_IND][sind],
-        stress_pred[0, FIELD_IND][sind],
-        "stress",
-        model.config.image_dir + add_str,
-    )
-    plot_pred(
-        epoch,
-        micro_slice,
-        VM_stress_true[0, FIELD_IND][sind],
-        VM_stress_pred[0, FIELD_IND][sind],
+        VM_stress_true[0][sind],
+        VM_stress_pred[0][sind],
         "VM_stress",
         model.config.image_dir + add_str,
     )
@@ -287,11 +281,6 @@ def compute_losses(
         # NOTE: only use this when we iterate directly over strain fields
         h_in_last = last_iterate
 
-        (
-            model.scale_strain(strain_true)
-            if model.config.penalize_teacher_resid
-            else last_iterate
-        )
         h_out_last = model.F(h_in_last.detach(), input_encoded)
 
         # compute energy in residual and add that term
@@ -301,6 +290,18 @@ def compute_losses(
             h_in_teacher = model.scale_strain(strain_true)
             h_out_teacher = model.F(h_in_teacher.detach(), input_encoded)
             resid_loss = resid_loss + frob_norm_2(h_in_teacher - h_out_teacher)
+
+        if model.config.penalize_resid_misalignment:
+            # resid_deq = h_out_last
+            # error_true = model.scale_strain(strain_true) - h_in_last
+
+            align_diff = h_out_last - model.scale_strain(strain_true)
+
+            # inner product is between -1 and 1 (1 best, -1 worst)
+            # 1 means perfectly aligned, -1 means perfectly misaligned
+            align_loss = frob_norm_2(align_diff, align_diff)
+            print("align", align_loss)
+            resid_loss = resid_loss + align_loss
 
     # print(f"{strain_true.mean((0,-3,-2,-1))}")
     # print(f"{strain_pred.mean((0,-3,-2,-1))}")
@@ -326,9 +327,9 @@ def compute_losses(
     energy_loss = energy_loss.mean()
     resid_loss = resid_loss.mean()
 
-    print(
-        f"strain: {strain_loss:.4f}, stress: {stress_loss:.4f}, energy: {energy_loss:.4f},resid: {resid_loss}"
-    )
+    # print(
+    #     f"strain: {strain_loss:.4f}, stress: {stress_loss:.4f}, energy: {energy_loss:.4f},resid: {resid_loss:.4f}"
+    # )
 
     # if model.config.balance_losses:
     #     # balance so that each term contributes equally (change direction but not total magnitude of gradients)
@@ -524,7 +525,7 @@ def eval_pass(model, epoch, eval_loader, data_mode, ema_model=None):
 def train_model(model, config, train_loader, valid_loader):
     if config.use_EMA:
         ema_model = torch.optim.swa_utils.AveragedModel(
-            model, multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(0.99)
+            model, multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(0.999)
         )
     else:
         ema_model = None  # makes eval code simpler
@@ -618,15 +619,18 @@ def train_model(model, config, train_loader, valid_loader):
                 last_iterate,
             )
 
+            # make sure gradients are zeroed before we compute new ones
+            optimizer.zero_grad()
             # backprop now
             total_loss.backward()
             # now do grad clipping
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip_mag)
             optimizer.step()
-            optimizer.zero_grad()
 
             # update averaged model after the first epoch (so that we discard the initial noisy model)
             if config.use_EMA and e > 0:
+                # set ema model to training
+                ema_model.train()
                 ema_model.update_parameters(model)
 
             # now accumulate losses for future
